@@ -26,6 +26,20 @@
   #hud-caught { top: 12px; left: 12px; }
   #hud-caught .num { font-size: 20px; font-weight: 700; color: #ffd166; }
   #hud-hint { bottom: 12px; right: 12px; font-size: 12px; opacity: 0.85; pointer-events: auto; cursor: pointer; }
+  /* 当前视角模式小字（右上角，避让调参齿轮提示） */
+  #hud-cam { top: 12px; right: 12px; font-size: 12px; opacity: 0.85; pointer-events: auto; cursor: pointer; }
+  #hud-cam .mode { color: #ffd166; font-weight: 700; }
+
+  /* ===== 屏幕边缘威胁指示（老鹰在视野外时的红色三角） ===== */
+  #threat-arrow {
+    position: fixed; z-index: 15; left: 0; top: 0;
+    width: 0; height: 0;
+    border-left: 13px solid transparent; border-right: 13px solid transparent;
+    border-bottom: 22px solid #ff3b3b;
+    filter: drop-shadow(0 0 4px rgba(255,40,40,0.7));
+    opacity: 0; transition: opacity 0.25s; pointer-events: none;
+    transform-origin: 50% 50%;
+  }
 
   /* ===== Toast 提示 ===== */
   #toast {
@@ -82,13 +96,17 @@
 
   <!-- HUD -->
   <div id="hud-caught" class="hud">🪶 被叼次数: <span class="num" id="caught-num">0</span></div>
+  <div id="hud-cam" class="hud">🎥 <span class="mode" id="cam-mode">跟随</span> <span style="opacity:.6">(V切)</span></div>
   <div id="hud-hint" class="hud">⚙️ Tab 调参</div>
   <div id="toast"></div>
+  <!-- 屏幕边缘威胁指示（老鹰在视野外） -->
+  <div id="threat-arrow"></div>
 
   <!-- 开局覆盖层 -->
   <div id="overlay">
     <h1>🐔 老鹰抓小鸡 · 方块版</h1>
     <p>WASD / 方向键 移动母鸡，护住身后的小鸡链<br>老鹰会盯着队尾偷袭</p>
+    <p style="margin-top:10px;font-size:clamp(13px,3vw,16px);opacity:0.8">🎥 V 切换视角（跟随 / 第一人称 / 俯视）</p>
     <p class="blink">按任意移动键开始</p>
   </div>
 
@@ -140,6 +158,38 @@
 
   // 抓捕判定距离（冲刺中与队尾 < 此值 = 叼到）
   const CATCH_RADIUS = 0.8;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [相机系统配置] 三视角：follow（第三人称跟背）/ fps（第一人称）/ top（M1 俯视）
+  // 全部相机平滑都用真实帧 dt（updateCamera 收到的就是 frameDt），与固定步长无关。
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const CAM_MODES = ['follow', 'fps', 'top'];
+  const CAM_MODE_LABEL = { follow: '跟随', fps: '第一人称', top: '俯视' };
+
+  // follow（第三人称跟背）参数
+  const FOLLOW = {
+    dist: 8,            // 角色身后水平距离
+    height: 4.2,        // 相机高度
+    lookHeight: 1.2,    // lookAt 在角色上方的抬升
+    lookAhead: 1.0,     // lookAt 略向前
+    yawRate: 3,         // yaw 指数平滑速率（/s，"松松地跟"）
+    posRate: 3,         // 位置指数平滑速率（/s）
+    fov: 60,
+  };
+  // fps（第一人称）参数：眼高按受控角色取值（母鸡 1.45 / 小鸡 0.55 / 老鹰飞高 +0.2）
+  function eyeHeightOf(actor) {
+    if (actor === hen) return 1.45;
+    if (actor === eagle) return actor.pos.y + 0.2;   // 老鹰随飞行高度浮动
+    return 0.55;                                       // 小鸡（M2 接入）
+  }
+  const FPS = {
+    pitchDown: 5 * Math.PI / 180,  // 看向 forward 俯 5°
+    fov: 70,
+    bobRate: 9,                    // 移动视角 bob 频率
+    bobAmp: 0.06,                  // bob 幅度（米）
+  };
+  // 切换视角时相机位置/朝向的 0.4s 平滑过渡
+  const CAM_TRANSITION = 0.4;
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // [工具] 小型数学辅助（避免到处 new Vector3 造 GC，关键处用临时量复用）
@@ -523,6 +573,9 @@
   };
   scene.add(eagle.mesh);
 
+  // ── 受控角色引用：M1 固定母鸡，M2 选角后改这一行即可（输入/相机都读 controlled）──
+  let controlled = hen;
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // [输入] 键盘，preventDefault 方向键/空格/Tab，世界轴向移动
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -533,6 +586,9 @@
   ]);
   let started = false;     // 开局冻结：按第一个移动键才 true
   let panelOpen = false;
+  let camMode = 'follow';  // 当前视角模式（follow / fps / top），默认第三人称跟背
+  // camYaw：follow/fps 下相机自己的偏航（指数平滑追角色 yaw）。在 updateCamera 里维护。
+  let camYaw = controlled.yaw;
 
   window.addEventListener('keydown', (e) => {
     // 阻止方向键/空格滚动页面、Tab 跳焦点
@@ -547,23 +603,68 @@
     }
     // Tab 开合调参面板
     if (e.code === 'Tab') togglePanel();
+    // V 循环切换视角 follow → fps → top
+    if (e.code === 'KeyV' && !e.repeat) cycleCamMode();
   });
   window.addEventListener('keyup', (e) => {
     if (MOVE_KEYS.has(e.code) || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     keys[e.code] = false;
   });
 
-  // 读出母鸡输入方向（世界轴向，已归一化）；屏幕南侧看 → W=+Z 进画面深处，但更直觉的是 W=远离镜头(-Z)
-  // 镜头从南侧（+Z）看向 -Z，所以"上/W"应让母鸡远离镜头 = -Z 方向。
+  // 读出受控角色的世界移动方向（已归一化），按当前视角模式决定输入来源。
+  // 返回的是要喂给链条物理"母鸡期望速度"的世界方向；物理数学不变，只换这个来源。
+  //  - top  ：世界轴向（M1 现状）。镜头南侧看 → W=-Z 远离镜头。
+  //  - follow：把屏幕输入按相机 yaw 旋转成世界方向（推哪个屏幕方向就往哪跑）。
+  //  - fps  ：坦克式。W/S 沿角色 forward 进退（后退 0.5 倍速）；A/D 原地转向（直接转 yaw）。
+  // fpsTankTurn 标志：fps 下输入已直接驱动 yaw，physicsStep 里不要再用"速度方向"覆盖朝向。
   const inputDir = new THREE.Vector3();
-  function readInput(out) {
+  let fpsTankTurn = false;
+  function readInput(out, dt) {
+    fpsTankTurn = false;
+    const up    = keys['KeyW'] || keys['ArrowUp'];
+    const down  = keys['KeyS'] || keys['ArrowDown'];
+    const left  = keys['KeyA'] || keys['ArrowLeft'];
+    const right = keys['KeyD'] || keys['ArrowRight'];
+
+    if (camMode === 'fps') {
+      // ── 坦克式控制 ──
+      // forward = (sin yaw, cos yaw)；d(forward)/d(yaw) = (cos yaw, -sin yaw) = 角色右手向量。
+      // 故 yaw 增大 = 朝右转。D 增 yaw（右转），A 减 yaw（左转）。
+      fpsTankTurn = true;
+      const turnDeg = (controlled === hen) ? CFG.henTurnSpeed : CFG.henTurnSpeed; // 母鸡用 henTurnSpeed；M2 其它角色可分支
+      let turn = 0;
+      if (right) turn += 1;
+      if (left)  turn -= 1;
+      controlled.yaw += turn * (turnDeg * Math.PI / 180) * (dt || 0);
+      controlled.forward.set(Math.sin(controlled.yaw), 0, Math.cos(controlled.yaw));
+      // W/S 沿 forward 进退（后退 0.5 倍速；模长 <1 体现倍速，下游乘 henSpeed）
+      let drive = 0;
+      if (up)   drive += 1;
+      if (down) drive -= 0.5;
+      out.set(controlled.forward.x * drive, 0, controlled.forward.z * drive);
+      return out;
+    }
+
+    // follow / top：先取屏幕轴输入
     let x = 0, z = 0;
-    if (keys['KeyW'] || keys['ArrowUp'])    z -= 1;  // 远离镜头
-    if (keys['KeyS'] || keys['ArrowDown'])  z += 1;  // 朝向镜头
-    if (keys['KeyA'] || keys['ArrowLeft'])  x -= 1;  // 左
-    if (keys['KeyD'] || keys['ArrowRight']) x += 1;  // 右
+    if (up)    z -= 1;  // 远离镜头 / 屏幕上
+    if (down)  z += 1;  // 朝向镜头 / 屏幕下
+    if (left)  x -= 1;
+    if (right) x += 1;
     out.set(x, 0, z);
     if (out.lengthSq() > 0) out.normalize();
+
+    if (camMode === 'follow' && out.lengthSq() > 0) {
+      // 按相机 yaw 把屏幕方向旋转成世界方向。
+      // camYaw 定义：相机在角色身后，朝 +(sin camYaw, cos camYaw) 方向"看进画面"。
+      // 屏幕"上(-z)"= 看向方向；屏幕"右(+x)"= 看向方向右手侧。
+      const s = Math.sin(camYaw), c = Math.cos(camYaw);
+      // forward(看向)世界向量 = (s, c)；right 世界向量 = (c, -s)
+      const wx = -out.z * s + out.x * c;
+      const wz = -out.z * c - out.x * s;
+      out.set(wx, 0, wz);
+      // 旋转保持单位长度（out 旋转前已归一化），无需再 normalize
+    }
     return out;
   }
 
@@ -623,16 +724,19 @@
     // ───────────────────────────────────────────────────────────────
     // [1] 母鸡：输入 → MoveTowards 速度 → 积分 → 场地钳制 → 朝向转向
     // ───────────────────────────────────────────────────────────────
-    readInput(inputDir);
-    // 期望速度 = 输入方向 × henSpeed
+    // readInput 按当前视角模式产出世界期望方向（top=世界轴 / follow=按相机yaw旋转 / fps=坦克式）。
+    // ↑↑↑ 这是本次相机重构唯一改动的"输入方向来源"，下面链条物理数学一行未动。
+    readInput(inputDir, dt);
+    // 期望速度 = 输入方向 × henSpeed（fps 后退时 inputDir 模长 0.5，自然得到 0.5 倍速）
     _tmpDesired.set(inputDir.x * CFG.henSpeed, 0, inputDir.z * CFG.henSpeed);
     // accel 40（对应 GameConfig，无单独字段时沿用 40）
     moveTowards(hen.vel, hen.vel, _tmpDesired, 40 * dt);
     hen.pos.x += hen.vel.x * dt;
     hen.pos.z += hen.vel.z * dt;
     clampToArena(hen.pos, 1.0);
-    // 朝向：移动时朝速度方向，henTurnSpeed 度/秒平滑
-    if (hen.vel.lengthSq() > 0.04) {
+    // 朝向：fps 坦克模式下 yaw 已由 A/D 直接驱动（fpsTankTurn），不再用速度方向覆盖；
+    // 其余模式沿用现有逻辑——移动时朝速度方向，henTurnSpeed 度/秒平滑。
+    if (!fpsTankTurn && hen.vel.lengthSq() > 0.04) {
       const targetYaw = Math.atan2(hen.vel.x, hen.vel.z);
       hen.yaw = turnTowardsAngle(hen.yaw, targetYaw, CFG.henTurnSpeed, dt);
     }
@@ -1035,15 +1139,33 @@
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // [相机] 动态取景：固定偏航俯角，框住全部角色，注视点+距离指数平滑
+  // [相机系统] follow（第三人称跟背）/ fps（第一人称）/ top（M1 动态取景，原样保留）
+  // 三种模式各算出"目标相机位姿（位置 + 注视点）"；切换时用 0.4s 过渡平滑插值，不瞬移。
+  // 所有平滑都吃真实帧 dt（updateCamera 的入参 = frameDt）。
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // ---- top 模式状态（M1 动态取景，逻辑一字未改，仅搬进 computeTopPose） ----
   const camFocus = new THREE.Vector3(0, 0, 0);  // 平滑后的注视点
   let camDist = 34;                              // 平滑后的距离
   const CAM_PITCH = 45 * Math.PI / 180;          // 俯角 45°
   const CAM_YAW = 0;                             // 从场地南侧看（沿 +Z 看向 -Z）
 
-  function updateCamera(dt) {
-    // 水平包围盒：母鸡 + 全部小鸡 + 老鹰
+  // 一个"相机位姿"目标：位置 outPos + 注视点 outLook（每模式各自填充）
+  const _camPos = new THREE.Vector3();
+  const _camLook = new THREE.Vector3();
+  const _followPos = new THREE.Vector3();   // follow 平滑后的相机位置
+  let followInit = false;
+
+  // 过渡用：起点位姿快照 + 计时
+  const _transFromPos = new THREE.Vector3();
+  const _transFromQuat = new THREE.Quaternion();
+  const _scratchQuat = new THREE.Quaternion();
+  const _scratchObj = new THREE.Object3D();  // 借它把 (pos,look) 转成四元数
+  let transT = 0;                            // 过渡剩余时间（秒）
+  let transFov = 60;                         // 过渡起点 FOV
+
+  // ── top 模式：原 M1 动态取景，逐字保留 ──
+  function computeTopPose(dt, outPos, outLook) {
     let minX = hen.pos.x, maxX = hen.pos.x, minZ = hen.pos.z, maxZ = hen.pos.z;
     function extend(p) {
       if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
@@ -1054,39 +1176,200 @@
     const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
     const sizeX = (maxX - minX), sizeZ = (maxZ - minZ);
 
-    // 按包围盒尺寸 + fov/aspect 算能框住全部角色的距离（边距 1.3）
     const margin = 1.3;
     const fovV = camera.fov * Math.PI / 180;
     const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
     const distForX = (sizeX * margin * 0.5) / Math.tan(fovH / 2);
-    // distForZ：相机以 CAM_PITCH 俯角俯视，垂直 FOV 投到地面的 Z 深度被 sin(pitch) 压缩，
-    // 故所需距离要除以 sin(CAM_PITCH)（45° 时约 ×1.414），否则角色在 Z 向分散时会被裁出画面。
     const distForZ = (sizeZ * margin * 0.5) / (Math.tan(fovV / 2) * Math.sin(CAM_PITCH));
     let wantDist = Math.max(distForX, distForZ, 16);
-    // 上限放宽到 80：竖屏(aspect≈0.5)时 distForX 系数大，老鹰冲到另一侧会触发旧的 60 钳位导致出框。
     wantDist = clamp(wantDist, 16, 80);
 
-    // 注视点 + 距离指数平滑（rate=3）
     const k = smoothFactor(3, dt);
     camFocus.x += (cx - camFocus.x) * k;
     camFocus.z += (cz - camFocus.z) * k;
-    camFocus.y += (0.6 - camFocus.y) * k; // 略抬一点看角色身体
+    camFocus.y += (0.6 - camFocus.y) * k;
     camDist += (wantDist - camDist) * k;
 
-    // 由注视点 + 固定偏航/俯角 + 距离反算相机位置
-    // 相机在注视点的 +Z 侧、上方（南侧俯视）
     const horiz = Math.cos(CAM_PITCH) * camDist;
     const vert = Math.sin(CAM_PITCH) * camDist;
-    camera.position.set(
+    outPos.set(
       camFocus.x + Math.sin(CAM_YAW) * horiz,
       camFocus.y + vert,
       camFocus.z + Math.cos(CAM_YAW) * horiz
     );
-    camera.lookAt(camFocus.x, camFocus.y, camFocus.z);
+    outLook.set(camFocus.x, camFocus.y, camFocus.z);
+  }
 
-    // 太阳目标跟随注视点，让阴影始终在画面内
-    sun.target.position.set(camFocus.x, 0, camFocus.z);
-    sun.position.set(camFocus.x + 28, 46, camFocus.z + 20);
+  // ── follow 模式：相机在角色身后 dist=8、高 4.2，松松地追角色 yaw（指数平滑）──
+  function computeFollowPose(dt, outPos, outLook) {
+    const a = controlled;
+    // camYaw 指数平滑追角色 yaw（最短弧）。"松松地跟"=急转时慢半拍甩过来。
+    {
+      let diff = a.yaw - camYaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      camYaw += diff * smoothFactor(FOLLOW.yawRate, dt);
+    }
+    // 由 camYaw 反推"身后"方向：角色 forward=(sin,cos)，身后 = -forward。
+    const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
+    // 目标相机位置 = 角色位置 - forward*dist + 上方 height
+    const targetX = a.pos.x - fx * FOLLOW.dist;
+    const targetZ = a.pos.z - fz * FOLLOW.dist;
+    const targetY = a.pos.y + FOLLOW.height;
+    // 位置指数平滑（同样松松地跟）
+    if (!followInit) { _followPos.set(targetX, targetY, targetZ); followInit = true; }
+    else {
+      const kp = smoothFactor(FOLLOW.posRate, dt);
+      _followPos.x += (targetX - _followPos.x) * kp;
+      _followPos.y += (targetY - _followPos.y) * kp;
+      _followPos.z += (targetZ - _followPos.z) * kp;
+    }
+    outPos.copy(_followPos);
+    // lookAt 角色位置 + 抬 1.2m + 略向前 1m（用 camYaw 朝向，避免与相机 yaw 抖动打架）
+    outLook.set(
+      a.pos.x + fx * FOLLOW.lookAhead,
+      a.pos.y + FOLLOW.lookHeight,
+      a.pos.z + fz * FOLLOW.lookAhead
+    );
+  }
+
+  // ── fps 模式：相机绑角色头部，看向 forward 俯 5°，移动时轻微 bob ──
+  let fpsBobPhase = 0;
+  function computeFpsPose(dt, outPos, outLook) {
+    const a = controlled;
+    const eye = eyeHeightOf(a);
+    // 移动 bob：受控角色水平速度越大幅度越大
+    const sp = Math.hypot(a.vel.x, a.vel.z);
+    fpsBobPhase += sp * dt * FPS.bobRate;
+    const bob = Math.abs(Math.sin(fpsBobPhase)) * Math.min(sp / CFG.henSpeed, 1) * FPS.bobAmp;
+    outPos.set(a.pos.x, a.pos.y + eye + bob, a.pos.z);
+    // 看向 forward 并俯 5°：在前方取一点，y 比眼略低（tan(5°)·1m）
+    const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
+    outLook.set(
+      outPos.x + fx,
+      outPos.y - Math.tan(FPS.pitchDown),
+      outPos.z + fz
+    );
+  }
+
+  // 期望 FOV（follow=60 / fps=70 / top=沿用 55 不动镜头算式）
+  function desiredFov() {
+    if (camMode === 'follow') return FOLLOW.fov;
+    if (camMode === 'fps') return FPS.fov;
+    return 55;
+  }
+
+  function updateCamera(dt) {
+    // 1) 算当前模式的目标位姿
+    if (camMode === 'follow') computeFollowPose(dt, _camPos, _camLook);
+    else if (camMode === 'fps') computeFpsPose(dt, _camPos, _camLook);
+    else computeTopPose(dt, _camPos, _camLook);
+
+    const fovTarget = desiredFov();
+
+    if (transT > 0) {
+      // 2) 过渡中：从快照位姿向目标位姿插值（位置 lerp，朝向 slerp，FOV lerp）
+      transT = Math.max(0, transT - dt);
+      const u = 1 - transT / CAM_TRANSITION;           // 0→1
+      const e = u * u * (3 - 2 * u);                    // smoothstep
+      // 目标朝向四元数：用 scratchObj 摆到目标位姿再 lookAt
+      _scratchObj.position.copy(_camPos);
+      _scratchObj.up.set(0, 1, 0);
+      _scratchObj.lookAt(_camLook);
+      _scratchQuat.copy(_scratchObj.quaternion);
+      camera.position.lerpVectors(_transFromPos, _camPos, e);
+      camera.quaternion.slerpQuaternions(_transFromQuat, _scratchQuat, e);
+      camera.fov = transFov + (fovTarget - transFov) * e;
+      camera.updateProjectionMatrix();
+    } else {
+      // 3) 稳态：直接对准
+      camera.position.copy(_camPos);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(_camLook);
+      if (Math.abs(camera.fov - fovTarget) > 0.01) {
+        camera.fov = fovTarget;
+        camera.updateProjectionMatrix();
+      }
+    }
+
+    // 太阳目标 + 阴影框跟随受控角色（保证阴影在视野内；top 维持原行为也成立）
+    const sx = camMode === 'top' ? camFocus.x : controlled.pos.x;
+    const sz = camMode === 'top' ? camFocus.z : controlled.pos.z;
+    sun.target.position.set(sx, 0, sz);
+    sun.position.set(sx + 28, 46, sz + 20);
+
+    // 4) 屏幕边缘威胁指示（follow/fps）
+    updateThreatArrow(dt);
+  }
+
+  // 切换视角：快照当前位姿做 0.4s 过渡起点，循环 follow→fps→top，更新 HUD 与 mesh 可见性
+  function cycleCamMode() {
+    const i = CAM_MODES.indexOf(camMode);
+    setCamMode(CAM_MODES[(i + 1) % CAM_MODES.length]);
+  }
+  function setCamMode(next) {
+    if (next === camMode) return;
+    // 快照当前真实相机位姿作为过渡起点
+    _transFromPos.copy(camera.position);
+    _transFromQuat.copy(camera.quaternion);
+    transFov = camera.fov;
+    transT = CAM_TRANSITION;
+    // 离开 fps：恢复上一个受控角色 mesh 可见
+    if (camMode === 'fps') controlled.mesh.visible = true;
+    camMode = next;
+    // 进入 follow：camYaw 从当前角色 yaw 起步，位置平滑器重置到目标，避免开场猛甩
+    if (next === 'follow') { camYaw = controlled.yaw; followInit = false; }
+    // 进入 fps：隐藏受控角色自身 mesh（看不到自己脑袋）
+    if (next === 'fps') controlled.mesh.visible = false;
+    // HUD 文字
+    const el = document.getElementById('cam-mode');
+    if (el) el.textContent = CAM_MODE_LABEL[next];
+  }
+
+  // ── 屏幕边缘威胁指示：老鹰在视野外时屏幕边缘画红 ▲ 指向它（top 不显示）──
+  const _threatProj = new THREE.Vector3();
+  const threatArrowEl = document.getElementById('threat-arrow');
+  let threatOpacity = 0;
+  function updateThreatArrow(dt) {
+    if (camMode === 'top') {
+      threatOpacity += (0 - threatOpacity) * smoothFactor(8, dt);
+      threatArrowEl.style.opacity = threatOpacity.toFixed(3);
+      return;
+    }
+    // 把老鹰投影到 NDC
+    _threatProj.set(eagle.pos.x, eagle.pos.y + 0.3, eagle.pos.z).project(camera);
+    const behind = _threatProj.z > 1;                       // 在相机后方（裁剪面外）
+    const outX = _threatProj.x < -1 || _threatProj.x > 1;
+    const outY = _threatProj.y < -1 || _threatProj.y > 1;
+    const offscreen = behind || outX || outY;
+
+    let targetOp = 0;
+    if (offscreen) {
+      targetOp = 1;
+      const W = window.innerWidth, H = window.innerHeight;
+      // 方向：从屏幕中心指向老鹰的屏幕方位。后方时把方向翻转（投影会镜像）。
+      let nx = _threatProj.x, ny = _threatProj.y;
+      if (behind) { nx = -nx; ny = -ny; }
+      let ang = Math.atan2(ny, nx);   // 屏幕坐标系（y 向上）下的角度
+      // 钳到屏幕边框内一圈（留 28px 边距），把方向射线打到矩形边界
+      const mgn = 30;
+      const halfW = W / 2 - mgn, halfH = H / 2 - mgn;
+      const cosA = Math.cos(ang), sinA = Math.sin(ang);
+      // 射线与矩形求交，取较小 t
+      let t = Infinity;
+      if (Math.abs(cosA) > 1e-4) t = Math.min(t, halfW / Math.abs(cosA));
+      if (Math.abs(sinA) > 1e-4) t = Math.min(t, halfH / Math.abs(sinA));
+      const px = W / 2 + cosA * t;
+      const py = H / 2 - sinA * t;   // 屏幕 y 向下，取负
+      // ▲ 默认尖朝上(border-bottom)，旋转使尖端指向老鹰方位：
+      // 三角默认指向屏幕上方(-y)=数学 90°，需旋转 (-ang - 90°)（CSS 顺时针为正）
+      const deg = (-ang * 180 / Math.PI) - 90;
+      threatArrowEl.style.left = (px - 13) + 'px';   // 减去半宽(13)居中
+      threatArrowEl.style.top  = (py - 11) + 'px';   // 减去半高(~11)
+      threatArrowEl.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)';
+    }
+    threatOpacity += (targetOp - threatOpacity) * smoothFactor(8, dt);
+    threatArrowEl.style.opacity = threatOpacity.toFixed(3);
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

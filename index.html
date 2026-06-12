@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🐔 老鹰抓小鸡 · 方块版</title>
+<style>
+  /* ===== 全局：去边距、禁止滚动、像素硬朗风 ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #87CEEB; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  #game-canvas { display: block; width: 100vw; height: 100vh; }
+
+  /* ===== HUD：半透明圆角深底白字 ===== */
+  .hud {
+    position: fixed; z-index: 10; color: #fff;
+    background: rgba(20, 24, 30, 0.55);
+    border-radius: 10px; padding: 8px 12px;
+    font-size: 14px; line-height: 1.4;
+    backdrop-filter: blur(3px); pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  }
+  #hud-caught { top: 12px; left: 12px; }
+  #hud-caught .num { font-size: 20px; font-weight: 700; color: #ffd166; }
+  #hud-hint { bottom: 12px; right: 12px; font-size: 12px; opacity: 0.85; pointer-events: auto; cursor: pointer; }
+
+  /* ===== Toast 提示 ===== */
+  #toast {
+    position: fixed; z-index: 30; left: 50%; top: 18%; transform: translateX(-50%);
+    background: rgba(30, 20, 10, 0.85); color: #ffe;
+    padding: 10px 18px; border-radius: 12px; font-size: 15px; font-weight: 600;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    /* 窄屏(<360px)换行而非溢出：限宽 + 允许换行，居中文本 */
+    white-space: normal; max-width: calc(100vw - 24px); text-align: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #toast.show { opacity: 1; }
+
+  /* ===== 开局覆盖层 ===== */
+  #overlay {
+    position: fixed; z-index: 50; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 40%, rgba(20,30,45,0.55), rgba(10,15,25,0.78));
+    color: #fff; text-align: center; transition: opacity 0.6s; padding: 20px;
+  }
+  #overlay.hide { opacity: 0; pointer-events: none; }
+  #overlay h1 { font-size: clamp(26px, 7vw, 48px); margin-bottom: 18px; text-shadow: 0 3px 10px rgba(0,0,0,0.6); letter-spacing: 1px; }
+  #overlay p  { font-size: clamp(14px, 3.5vw, 19px); opacity: 0.9; line-height: 1.6; max-width: 90vw; }
+  #overlay .blink { animation: blink 1.2s ease-in-out infinite; margin-top: 14px; font-weight: 600; color: #ffd166; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* ===== 调参面板 ===== */
+  #panel {
+    position: fixed; z-index: 20; top: 12px; right: 12px;
+    width: min(320px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px); overflow-y: auto;
+    background: rgba(18, 22, 30, 0.92); color: #fff;
+    border-radius: 12px; padding: 14px 16px; font-size: 13px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+    display: none; backdrop-filter: blur(4px);
+  }
+  #panel.open { display: block; }
+  #panel h2 { font-size: 15px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+  #panel h2 .close { cursor: pointer; opacity: 0.7; font-size: 18px; }
+  #panel h2 .close:hover { opacity: 1; }
+  .row { margin-bottom: 11px; }
+  .row label { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .row label .val { color: #ffd166; font-variant-numeric: tabular-nums; }
+  .row input[type=range] { width: 100%; cursor: pointer; accent-color: #ffd166; }
+  #panel button.reset {
+    width: 100%; margin-top: 6px; padding: 8px; border: none; border-radius: 8px;
+    background: #ffd166; color: #1a1a1a; font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+  #panel button.reset:active { transform: scale(0.98); }
+</style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- HUD -->
+  <div id="hud-caught" class="hud">🪶 被叼次数: <span class="num" id="caught-num">0</span></div>
+  <div id="hud-hint" class="hud">⚙️ Tab 调参</div>
+  <div id="toast"></div>
+
+  <!-- 开局覆盖层 -->
+  <div id="overlay">
+    <h1>🐔 老鹰抓小鸡 · 方块版</h1>
+    <p>WASD / 方向键 移动母鸡，护住身后的小鸡链<br>老鹰会盯着队尾偷袭</p>
+    <p class="blink">按任意移动键开始</p>
+  </div>
+
+  <!-- 调参面板 -->
+  <div id="panel">
+    <h2>⚙️ 手感调参 <span class="close" id="panel-close">✕</span></h2>
+    <div id="panel-rows"></div>
+    <button class="reset" id="panel-reset">↺ 恢复默认</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.min.js"></script>
+  <script>
+  "use strict";
+  // ════════════════════════════════════════════════════════════════════════
+  // 《老鹰抓小鸡 · 方块版》M1 —— Minecraft 方块像素风
+  // 物理架构 + 参数全部翻译自已验证好玩的 Unity 原型（ChickChain.cs / GameConfig.cs）
+  // 不发明物理：行为层（主动跟跑）+ PBD 约束层（距离投影），固定步长 60Hz。
+  // ════════════════════════════════════════════════════════════════════════
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [CONFIG] 所有调好的常数（对应 GameConfig.cs）。Tab 面板读写的就是这一份。
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const DEFAULTS = {
+    // 老鹰
+    eagleSpeed: 7.5, eagleAccel: 40, dashMultiplier: 2.2, dashDuration: 0.28, dashCooldown: 2.0,
+    // 母鸡
+    henSpeed: 6.0, henTurnSpeed: 240,            // 度/秒
+    // 小鸡 / 链条
+    chickCount: 5,                                // M1 = 5 只（注意：参考里是 6）
+    chickSpacing: 0.85,                           // 链节静止长度 restLength
+    chickRunSpeed: 8, chickRunAccel: 35,
+    chainSubsteps: 3, chainIterations: 2,
+    chainDamping: 0.96, chainStretchLimit: 1.05, chainMaxCorrection: 0.35,
+    tailSpeedAmplify: 0.35,
+    chickMinSep: 0.45,                            // 小鸡间最小间距（替代 Unity 刚体碰撞的撑开效果）
+    // 场地
+    arenaWidth: 68, arenaDepth: 42,
+  };
+  // 运行时实际生效的配置（面板修改这一份，不存档）
+  const CFG = Object.assign({}, DEFAULTS);
+
+  // 固定步长物理常数
+  const FIXED_DT = 1 / 60;          // 物理步长，逻辑帧率无关
+  const MAX_FRAME_DT = 0.1;         // 单帧钳制 ≤0.1s，防螺旋死亡
+  const BUILD_GRACE = 1.0;          // 开局后老鹰冻结的额外保护（这里靠 started 控制，保留备用）
+
+  // 后半球硬约束独立大钳制（对应 ChickChain.cs 的 backHemisphereMaxCorr）
+  const BACK_HEMISPHERE_MAX_CORR = 0.9;
+
+  // 抓捕判定距离（冲刺中与队尾 < 此值 = 叼到）
+  const CATCH_RADIUS = 0.8;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [工具] 小型数学辅助（避免到处 new Vector3 造 GC，关键处用临时量复用）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 把向量 cur 朝 target 移动最多 maxDelta（对应 Unity Vector3.MoveTowards），返回新向量（写入 out）
+  function moveTowards(out, cur, target, maxDelta) {
+    const dx = target.x - cur.x, dy = target.y - cur.y, dz = target.z - cur.z;
+    const distSq = dx * dx + dy * dy + dz * dz;
+    if (distSq === 0 || (maxDelta >= 0 && distSq <= maxDelta * maxDelta)) {
+      out.set(target.x, target.y, target.z); return out;
+    }
+    const dist = Math.sqrt(distSq);
+    out.set(cur.x + dx / dist * maxDelta, cur.y + dy / dist * maxDelta, cur.z + dz / dist * maxDelta);
+    return out;
+  }
+  // 标量朝目标移动
+  function moveTowardsScalar(cur, target, maxDelta) {
+    if (Math.abs(target - cur) <= maxDelta) return target;
+    return cur + Math.sign(target - cur) * maxDelta;
+  }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  // 向量限制最大模长（写回同一个向量）
+  function clampMag(v, max) {
+    const m2 = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (m2 > max * max) { const m = Math.sqrt(m2); v.multiplyScalar(max / m); }
+    return v;
+  }
+  // 角度平滑插值（最短弧），degPerSec 为转速（度/秒），dt 秒
+  function turnTowardsAngle(cur, target, degPerSec, dt) {
+    let diff = target - cur;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const maxStep = degPerSec * Math.PI / 180 * dt;
+    if (Math.abs(diff) <= maxStep) return target;
+    return cur + Math.sign(diff) * maxStep;
+  }
+  // 指数平滑系数 1 - exp(-rate·dt)
+  function smoothFactor(rate, dt) { return 1 - Math.exp(-rate * dt); }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [场景搭建] renderer / scene / 光照 / 草地 / 栅栏 / 花草 / 雾
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const canvas = document.getElementById('game-canvas');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setClearColor(0x87CEEB);                       // 亮天蓝
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // dpr 钳 ≤2
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x9fd4ee, 70, 140);           // 轻微远景雾
+
+  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 400);
+  camera.position.set(0, 30, 40);
+  camera.lookAt(0, 0, 0);
+
+  // ---- 光照：环境光 + 带阴影方向光 ----
+  scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.95);
+  sun.position.set(28, 46, 20);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  // shadow camera 覆盖全场
+  const SC = sun.shadow.camera;
+  SC.near = 1; SC.far = 160;
+  SC.left = -55; SC.right = 55; SC.top = 40; SC.bottom = -40;
+  sun.shadow.bias = -0.0008;
+  scene.add(sun);
+  scene.add(sun.target);
+
+  // ---- 共享几何/材质池（减少对象数）----
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1); // 单位方块，缩放复用
+  const matCache = {};
+  function mat(hex) {
+    if (!matCache[hex]) matCache[hex] = new THREE.MeshLambertMaterial({ color: hex });
+    return matCache[hex];
+  }
+  // 造一个方块 Mesh：尺寸 sx,sy,sz，中心局部坐标 px,py,pz，颜色
+  function box(sx, sy, sz, px, py, pz, hex, cast = true) {
+    const m = new THREE.Mesh(boxGeo, mat(hex));
+    m.scale.set(sx, sy, sz);
+    m.position.set(px, py, pz);
+    m.castShadow = cast;
+    m.receiveShadow = false;
+    return m;
+  }
+
+  // ---- 远景大地面（深绿，铺到很远）----
+  const groundFar = new THREE.Mesh(
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.MeshLambertMaterial({ color: 0x2f7d32 })
+  );
+  groundFar.rotation.x = -Math.PI / 2;
+  groundFar.position.y = -0.06;
+  groundFar.receiveShadow = true;
+  scene.add(groundFar);
+
+  // ---- 草地：InstancedMesh 平铺 1×1 扁方块，棋盘式随机错落亮绿 ----
+  const GRASS_W = 80, GRASS_D = 54;                 // 比场地大一圈
+  const grassCount = GRASS_W * GRASS_D;
+  const grassGeo = new THREE.BoxGeometry(1, 0.1, 1);
+  const grassMatInst = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const grass = new THREE.InstancedMesh(grassGeo, grassMatInst, grassCount);
+  grass.receiveShadow = true;
+  grass.castShadow = false;
+  {
+    const dummy = new THREE.Object3D();
+    const greens = [0x6abe30, 0x77c843, 0x5fae2c];   // 2~3 种亮绿
+    const col = new THREE.Color();
+    let idx = 0;
+    for (let gx = 0; gx < GRASS_W; gx++) {
+      for (let gz = 0; gz < GRASS_D; gz++) {
+        const wx = gx - GRASS_W / 2 + 0.5;
+        const wz = gz - GRASS_D / 2 + 0.5;
+        dummy.position.set(wx, 0, wz);
+        dummy.updateMatrix();
+        grass.setMatrixAt(idx, dummy.matrix);
+        // 棋盘 + 随机错落选色
+        const pick = ((gx + gz) % 2 === 0)
+          ? greens[Math.random() < 0.5 ? 0 : 1]
+          : greens[Math.random() < 0.5 ? 1 : 2];
+        col.setHex(pick);
+        grass.setColorAt(idx, col);
+        idx++;
+      }
+    }
+    grass.instanceMatrix.needsUpdate = true;
+    if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
+  }
+  scene.add(grass);
+
+  // ---- 场地边界栅栏：一圈棕色矮短柱 ----
+  const ARENA_HALF_W = CFG.arenaWidth / 2;   // 注意：开局后不再随面板改变（chickSpacing/速度才改）
+  const ARENA_HALF_D = CFG.arenaDepth / 2;
+  function buildFence() {
+    const group = new THREE.Group();
+    const postGeo = new THREE.BoxGeometry(0.7, 1.0, 0.7);
+    const postMat = mat(0x8a5a2b);
+    const railMat = mat(0xa9713a);
+    const step = 2.2;
+    function post(x, z) {
+      const p = new THREE.Mesh(postGeo, postMat);
+      p.position.set(x, 0.45, z); p.castShadow = true; p.receiveShadow = true;
+      group.add(p);
+    }
+    // 横向两条边（z = ±halfD）
+    for (let x = -ARENA_HALF_W; x <= ARENA_HALF_W + 0.01; x += step) {
+      post(x, -ARENA_HALF_D); post(x, ARENA_HALF_D);
+    }
+    // 纵向两条边（x = ±halfW）
+    for (let z = -ARENA_HALF_D; z <= ARENA_HALF_D + 0.01; z += step) {
+      post(-ARENA_HALF_W, z); post(ARENA_HALF_W, z);
+    }
+    // 横栏（细长方块连接，纯装饰）
+    const railH = 0.18;
+    function rail(cx, cz, lenX, lenZ) {
+      const r = new THREE.Mesh(boxGeo, railMat);
+      r.scale.set(lenX, railH, lenZ);
+      r.position.set(cx, 0.62, cz);
+      r.castShadow = true;
+      group.add(r);
+    }
+    rail(0, -ARENA_HALF_D, CFG.arenaWidth, 0.18);
+    rail(0,  ARENA_HALF_D, CFG.arenaWidth, 0.18);
+    rail(-ARENA_HALF_W, 0, 0.18, CFG.arenaDepth);
+    rail( ARENA_HALF_W, 0, 0.18, CFG.arenaDepth);
+    return group;
+  }
+  scene.add(buildFence());
+
+  // ---- 点缀：靠边缘随机撒方块小花 + 草丛，中央留空 ----
+  function buildDecor() {
+    const group = new THREE.Group();
+    const flowerColors = [0xffffff, 0xffe14d, 0xe04f4f]; // 白/黄/红
+    const bushColors = [0x4f9e28, 0x58ab2f];
+    const count = 20; // 15~25 之间
+    let placed = 0, tries = 0;
+    while (placed < count && tries < 400) {
+      tries++;
+      const x = (Math.random() - 0.5) * (CFG.arenaWidth - 3);
+      const z = (Math.random() - 0.5) * (CFG.arenaDepth - 3);
+      // 中央留空：跑动区半径内不撒
+      if (Math.abs(x) < 9 && Math.abs(z) < 7) continue;
+      placed++;
+      if (Math.random() < 0.65) {
+        // 小花：茎 + 1~3 个花瓣小块
+        const stem = new THREE.Mesh(boxGeo, mat(0x3e8e22));
+        stem.scale.set(0.08, 0.5, 0.08); stem.position.set(x, 0.25, z); stem.castShadow = true;
+        group.add(stem);
+        const fc = flowerColors[(Math.random() * flowerColors.length) | 0];
+        const petals = 1 + ((Math.random() * 3) | 0);
+        for (let p = 0; p < petals; p++) {
+          const fl = new THREE.Mesh(boxGeo, mat(fc));
+          const s = 0.14 + Math.random() * 0.08;
+          fl.scale.set(s, s, s);
+          fl.position.set(x + (Math.random() - 0.5) * 0.18, 0.5 + Math.random() * 0.12, z + (Math.random() - 0.5) * 0.18);
+          fl.castShadow = true;
+          group.add(fl);
+        }
+      } else {
+        // 草丛：2~4 个绿色小块
+        const bc = bushColors[(Math.random() * bushColors.length) | 0];
+        const blades = 2 + ((Math.random() * 3) | 0);
+        for (let b = 0; b < blades; b++) {
+          const bl = new THREE.Mesh(boxGeo, mat(bc));
+          const h = 0.25 + Math.random() * 0.25;
+          bl.scale.set(0.12, h, 0.12);
+          bl.position.set(x + (Math.random() - 0.5) * 0.5, h / 2, z + (Math.random() - 0.5) * 0.5);
+          bl.castShadow = true;
+          group.add(bl);
+        }
+      }
+    }
+    return group;
+  }
+  scene.add(buildDecor());
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [角色建模] 全部 BoxGeometry 拼，挂在 Group 下，附程序动画用的子部件引用
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // ---- 母鸡（玩家）：白身 + 头 + 红冠 + 黄喙 + 红肉垂 + 双翅 + 双腿 + 尾巴，总高约 1.6 ----
+  function makeHen() {
+    const g = new THREE.Group();
+    // 身体（约 1.0×0.9×1.3），底贴地 → 中心 y≈0.45 + 腿高
+    const legH = 0.4;
+    const body = box(1.0, 0.9, 1.3, 0, legH + 0.45, 0, 0xffffff);
+    g.add(body);
+    // 翅膀（两侧白，比身体略薄）
+    const wingL = box(0.18, 0.6, 0.9, -0.58, legH + 0.5, 0, 0xf2f2f2);
+    const wingR = box(0.18, 0.6, 0.9,  0.58, legH + 0.5, 0, 0xf2f2f2);
+    g.add(wingL); g.add(wingR);
+    // 尾巴（身后上翘）
+    const tail = box(0.5, 0.45, 0.35, 0, legH + 0.75, -0.75, 0xeeeeee);
+    g.add(tail);
+    // 头（身体前上方）
+    const head = box(0.6, 0.6, 0.6, 0, legH + 1.0, 0.7, 0xffffff);
+    g.add(head);
+    // 鸡冠（红，3 小块）
+    g.add(box(0.12, 0.22, 0.16, 0, legH + 1.38, 0.6, 0xe23a3a));
+    g.add(box(0.12, 0.28, 0.16, 0, legH + 1.42, 0.74, 0xe23a3a));
+    g.add(box(0.12, 0.20, 0.16, 0, legH + 1.36, 0.88, 0xe23a3a));
+    // 黄喙
+    g.add(box(0.18, 0.16, 0.28, 0, legH + 0.96, 1.05, 0xf5b301));
+    // 红肉垂（喙下方）
+    g.add(box(0.12, 0.18, 0.1, 0, legH + 0.78, 0.98, 0xd02b2b));
+    // 眼睛（黑，两侧）
+    g.add(box(0.08, 0.1, 0.08, -0.22, legH + 1.08, 1.0, 0x111111));
+    g.add(box(0.08, 0.1, 0.08,  0.22, legH + 1.08, 1.0, 0x111111));
+    // 双腿（橙）
+    const legL = box(0.16, legH, 0.16, -0.28, legH / 2, 0.1, 0xe88a1a);
+    const legR = box(0.16, legH, 0.16,  0.28, legH / 2, 0.1, 0xe88a1a);
+    g.add(legL); g.add(legR);
+    g.userData = { wingL, wingR, legL, legR, legH, body };
+    return g;
+  }
+
+  // ---- 小鸡 ×N：亮黄身 + 橙喙 + 黑眼 + 迷你腿，身约 0.45 ----
+  function makeChick() {
+    const g = new THREE.Group();
+    const legH = 0.12;
+    const body = box(0.45, 0.42, 0.5, 0, legH + 0.21, 0, 0xffe14d);
+    g.add(body);
+    // 头（略小，前上）
+    const head = box(0.3, 0.3, 0.3, 0, legH + 0.46, 0.2, 0xffe14d);
+    g.add(head);
+    // 橙喙
+    g.add(box(0.1, 0.08, 0.14, 0, legH + 0.44, 0.4, 0xf08a1a));
+    // 黑眼
+    g.add(box(0.05, 0.06, 0.05, -0.1, legH + 0.5, 0.32, 0x111111));
+    g.add(box(0.05, 0.06, 0.05,  0.1, legH + 0.5, 0.32, 0x111111));
+    // 迷你腿
+    const legL = box(0.07, legH, 0.07, -0.12, legH / 2, 0, 0xe88a1a);
+    const legR = box(0.07, legH, 0.07,  0.12, legH / 2, 0, 0xe88a1a);
+    g.add(legL); g.add(legR);
+    g.userData = { body, legL, legR, legH, baseColor: 0xffe14d };
+    return g;
+  }
+
+  // ---- 老鹰：深棕身 + 白灰头 + 黄钩喙 + 大翅膀（扇动）+ 尾羽 ----
+  function makeEagle() {
+    const g = new THREE.Group();
+    const body = box(0.8, 0.7, 1.4, 0, 0, 0, 0x5a3d22);
+    g.add(body);
+    // 头（白灰，前方）
+    const head = box(0.55, 0.55, 0.55, 0, 0.18, 0.85, 0xd8d8d0);
+    g.add(head);
+    // 黄钩喙（两块拼出钩：前伸 + 下钩）
+    g.add(box(0.16, 0.16, 0.34, 0, 0.16, 1.2, 0xf5b301));
+    g.add(box(0.14, 0.2, 0.12, 0, 0.05, 1.32, 0xe09000));
+    // 黑眼
+    g.add(box(0.07, 0.09, 0.07, -0.18, 0.26, 1.05, 0x111111));
+    g.add(box(0.07, 0.09, 0.07,  0.18, 0.26, 1.05, 0x111111));
+    // 大翅膀：用 pivot 组实现"从肩部扇动"，翅膀本体偏到外侧
+    const wingL = new THREE.Group();
+    const wingMeshL = box(1.8, 0.14, 0.9, -0.9, 0, 0, 0x6b4a2a, true);
+    wingL.add(wingMeshL); wingL.position.set(-0.4, 0.1, 0); g.add(wingL);
+    const wingR = new THREE.Group();
+    const wingMeshR = box(1.8, 0.14, 0.9, 0.9, 0, 0, 0x6b4a2a, true);
+    wingR.add(wingMeshR); wingR.position.set(0.4, 0.1, 0); g.add(wingR);
+    // 翼尖深色羽（点缀）
+    wingMeshL.add(box(0.6, 0.16, 0.5, -1.55 + 0.9, 0, -0.1, 0x3d2814)); // 相对 wingMeshL 局部
+    wingMeshR.add(box(0.6, 0.16, 0.5, 1.55 - 0.9, 0, -0.1, 0x3d2814));
+    // 尾羽（身后）
+    g.add(box(0.6, 0.12, 0.7, 0, 0, -1.0, 0x4a3219));
+    // 折叠收爪：两条橙黄短腿 + 三趾抓钩，贴腹部，模拟飞行中收起的爪（对应母鸡 legL/legR 写法）
+    // 趾钩直接挂到 g 下（不挂在被 scale 过的腿上，避免几何被拉伸变形）
+    function addTalon(side) {
+      const lx = side * 0.22;
+      g.add(box(0.1, 0.25, 0.1, lx, -0.15, 0.12, 0xe0a020)); // 短腿
+      // 三趾抓钩：3 个扁方块，从脚踝略向前下方收拢
+      g.add(box(0.05, 0.05, 0.18, lx - 0.06, -0.3, 0.18, 0xc98a18));
+      g.add(box(0.05, 0.05, 0.18, lx,        -0.3, 0.2,  0xc98a18));
+      g.add(box(0.05, 0.05, 0.18, lx + 0.06, -0.3, 0.18, 0xc98a18));
+    }
+    addTalon(-1); addTalon(1);
+    g.userData = { wingL, wingR, body };
+    return g;
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [角色状态] 用纯数据结构持有物理状态（位置/速度/朝向），Mesh 只做渲染
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // 母鸡状态
+  const hen = {
+    mesh: makeHen(),
+    pos: new THREE.Vector3(0, 0, 6),
+    vel: new THREE.Vector3(0, 0, 0),
+    yaw: Math.PI,           // 面朝 -Z（朝场地南/镜头方向起步无所谓，会平滑转）
+    forward: new THREE.Vector3(0, 0, -1),
+    bob: 0,                 // 走路上下颠相位
+  };
+  scene.add(hen.mesh);
+
+  // 小鸡链（行为状态数组）
+  const chicks = [];
+  function buildChicks() {
+    // 清掉旧的
+    for (const c of chicks) scene.remove(c.mesh);
+    chicks.length = 0;
+    const n = CFG.chickCount;
+    // 用母鸡 forward 的反方向（身后）排队
+    const bx = -hen.forward.x, bz = -hen.forward.z;
+    for (let i = 0; i < n; i++) {
+      const mesh = makeChick();
+      const px = hen.pos.x + bx * CFG.chickSpacing * (i + 1);
+      const pz = hen.pos.z + bz * CFG.chickSpacing * (i + 1);
+      mesh.position.set(px, 0, pz);
+      scene.add(mesh);
+      chicks.push({
+        mesh,
+        pos: new THREE.Vector3(px, 0, pz),
+        vel: new THREE.Vector3(0, 0, 0),
+        yaw: hen.yaw,
+        bob: Math.random() * Math.PI * 2,  // 错开走路相位
+        flashTimer: 0,                      // 被叼后闪烁计时
+        index: i,
+      });
+    }
+  }
+  buildChicks();
+
+  // 老鹰状态
+  const eagle = {
+    mesh: makeEagle(),
+    pos: new THREE.Vector3(0, 1.6, -16),
+    vel: new THREE.Vector3(0, 0, 0),
+    yaw: 0,
+    forward: new THREE.Vector3(0, 0, 1),
+    state: 'ORBIT',          // ORBIT / ATTACK / RETREAT
+    orbitDir: 1,             // +1 / -1 盘旋方向
+    orbitAngle: 0,           // 当前盘旋角
+    dashTimer: 0,            // 冲刺剩余时间
+    dashCooldown: 0,         // 冲刺冷却剩余
+    attackTimer: 0,          // ATTACK 已持续时间（僵局检测）
+    attackBestDist: Infinity,// ATTACK 期间刷新到的最近队尾距离
+    retreatTimer: 0,         // RETREAT 计时
+    wingPhase: 0,            // 翅膀扇动相位
+    targetY: 1.6,            // 飞行目标高度（俯冲压低）
+  };
+  scene.add(eagle.mesh);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [输入] 键盘，preventDefault 方向键/空格/Tab，世界轴向移动
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const keys = {};
+  const MOVE_KEYS = new Set([
+    'KeyW', 'KeyA', 'KeyS', 'KeyD',
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'
+  ]);
+  let started = false;     // 开局冻结：按第一个移动键才 true
+  let panelOpen = false;
+
+  window.addEventListener('keydown', (e) => {
+    // 阻止方向键/空格滚动页面、Tab 跳焦点
+    if (MOVE_KEYS.has(e.code) || e.code === 'Space' || e.code === 'Tab') {
+      e.preventDefault();
+    }
+    keys[e.code] = true;
+    // 第一个移动键 → 开局
+    if (!started && MOVE_KEYS.has(e.code)) {
+      started = true;
+      document.getElementById('overlay').classList.add('hide');
+    }
+    // Tab 开合调参面板
+    if (e.code === 'Tab') togglePanel();
+  });
+  window.addEventListener('keyup', (e) => {
+    if (MOVE_KEYS.has(e.code) || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
+    keys[e.code] = false;
+  });
+
+  // 读出母鸡输入方向（世界轴向，已归一化）；屏幕南侧看 → W=+Z 进画面深处，但更直觉的是 W=远离镜头(-Z)
+  // 镜头从南侧（+Z）看向 -Z，所以"上/W"应让母鸡远离镜头 = -Z 方向。
+  const inputDir = new THREE.Vector3();
+  function readInput(out) {
+    let x = 0, z = 0;
+    if (keys['KeyW'] || keys['ArrowUp'])    z -= 1;  // 远离镜头
+    if (keys['KeyS'] || keys['ArrowDown'])  z += 1;  // 朝向镜头
+    if (keys['KeyA'] || keys['ArrowLeft'])  x -= 1;  // 左
+    if (keys['KeyD'] || keys['ArrowRight']) x += 1;  // 右
+    out.set(x, 0, z);
+    if (out.lengthSq() > 0) out.normalize();
+    return out;
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [链条物理] 固定步长一步。严格照 ChickChain.cs 翻译。
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // 临时复用向量（避免每步 new）
+  const _tmpDesired = new THREE.Vector3();
+  const _tmpHorz = new THREE.Vector3();
+  const _tmpDelta = new THREE.Vector3();
+  const _henAnchor = new THREE.Vector3();
+  const _henRight = new THREE.Vector3();
+  const _threatFwd = new THREE.Vector3();
+  const _toChick = new THREE.Vector3();
+  const _slot = new THREE.Vector3();
+  const _chainDir = new THREE.Vector3();
+  const _leaderPos = new THREE.Vector3();
+  const _leaderOfPrev = new THREE.Vector3();
+  // PBD 工作位置数组
+  const pbdPos = [];
+  // 行为层 leader 读取用的"帧开头快照"（对应 C# 中 _pbdPos 在行为层只读不写的语义）
+  const startPos = [];
+
+  // 母鸡锚点：母鸡身后半个间距，纯水平（对应 HenAnchor()）
+  function computeHenAnchor(out) {
+    out.set(
+      hen.pos.x - hen.forward.x * (CFG.chickSpacing * 0.5),
+      hen.pos.y,
+      hen.pos.z - hen.forward.z * (CFG.chickSpacing * 0.5)
+    );
+    return out;
+  }
+
+  // "母鸡→老鹰"威胁方向（对应 ThreatForward()）；老鹰冻结/退化时用母鸡 forward
+  function computeThreatForward(out) {
+    const dx = eagle.pos.x - hen.pos.x, dz = eagle.pos.z - hen.pos.z;
+    if (dx * dx + dz * dz > 0.01) {
+      const d = Math.sqrt(dx * dx + dz * dz);
+      out.set(dx / d, 0, dz / d);
+    } else {
+      out.set(hen.forward.x, 0, hen.forward.z);
+    }
+    return out;
+  }
+
+  // 把一个水平位置钳制到场地内
+  function clampToArena(p, margin) {
+    const hw = CFG.arenaWidth / 2 - margin, hd = CFG.arenaDepth / 2 - margin;
+    p.x = clamp(p.x, -hw, hw);
+    p.z = clamp(p.z, -hd, hd);
+  }
+
+  function physicsStep(dt) {
+    const n = chicks.length;
+
+    // ───────────────────────────────────────────────────────────────
+    // [1] 母鸡：输入 → MoveTowards 速度 → 积分 → 场地钳制 → 朝向转向
+    // ───────────────────────────────────────────────────────────────
+    readInput(inputDir);
+    // 期望速度 = 输入方向 × henSpeed
+    _tmpDesired.set(inputDir.x * CFG.henSpeed, 0, inputDir.z * CFG.henSpeed);
+    // accel 40（对应 GameConfig，无单独字段时沿用 40）
+    moveTowards(hen.vel, hen.vel, _tmpDesired, 40 * dt);
+    hen.pos.x += hen.vel.x * dt;
+    hen.pos.z += hen.vel.z * dt;
+    clampToArena(hen.pos, 1.0);
+    // 朝向：移动时朝速度方向，henTurnSpeed 度/秒平滑
+    if (hen.vel.lengthSq() > 0.04) {
+      const targetYaw = Math.atan2(hen.vel.x, hen.vel.z);
+      hen.yaw = turnTowardsAngle(hen.yaw, targetYaw, CFG.henTurnSpeed, dt);
+    }
+    hen.forward.set(Math.sin(hen.yaw), 0, Math.cos(hen.yaw));
+
+    if (n === 0) return;
+
+    // 确保 pbdPos / startPos 长度足够
+    while (pbdPos.length < n) pbdPos.push(new THREE.Vector3());
+    while (startPos.length < n) startPos.push(new THREE.Vector3());
+
+    // 快照本步开头位置。
+    // startPos = 帧开头快照，行为层只读不写（对应 C# 里 _pbdPos 在行为层不被修改的语义）。
+    // pbdPos   = 工作位置：行为层在其上做显式速度积分（JS 无外部物理引擎，C# 靠 Unity 在
+    //            FixedUpdate 后步进 rb.position；这里把 vel*dt 当成预测步直接写进 pbdPos，
+    //            等价于"从帧开头位置出发的 position prediction"，PBD 随后在其上投影约束），有意为之。
+    for (let i = 0; i < n; i++) { pbdPos[i].copy(chicks[i].pos); startPos[i].copy(chicks[i].pos); }
+
+    // ───────────────────────────────────────────────────────────────
+    // [2] 行为层：每只链上小鸡主动跟跑槽位（直接改速度）
+    //     前半球（以母鸡→老鹰为轴）强制全速绕侧回后方
+    // ───────────────────────────────────────────────────────────────
+    computeHenAnchor(_henAnchor);
+    computeThreatForward(_threatFwd);
+    // 母鸡横向轴 = up × threatFwd
+    _henRight.set(_threatFwd.z, 0, -_threatFwd.x); // = cross(up, threatFwd) 的水平结果
+    {
+      // 归一化 henRight
+      const rl = Math.hypot(_henRight.x, _henRight.z);
+      if (rl > 1e-5) { _henRight.x /= rl; _henRight.z /= rl; }
+    }
+    const henRadius = 0.8 + CFG.chickSpacing * 0.5;
+
+    for (let i = 0; i < n; i++) {
+      const c = chicks[i];
+      const myPos = startPos[i];   // 自身位置也读帧开头快照，跟 leaderPos 同一参考系
+
+      // ---- 前半球判定 ----
+      _toChick.set(myPos.x - hen.pos.x, 0, myPos.z - hen.pos.z);
+      const inFront = (_toChick.x * _threatFwd.x + _toChick.z * _threatFwd.z) > 0;
+
+      _tmpDesired.set(0, 0, 0);
+
+      if (inFront) {
+        // 前半球：全速绕向左右两侧中更近一侧的目标点
+        const sideOffset = henRadius + 0.8;
+        const lx = hen.pos.x - _henRight.x * sideOffset, lz = hen.pos.z - _henRight.z * sideOffset;
+        const rx = hen.pos.x + _henRight.x * sideOffset, rz = hen.pos.z + _henRight.z * sideOffset;
+        const dl = (myPos.x - lx) ** 2 + (myPos.z - lz) ** 2;
+        const dr = (myPos.x - rx) ** 2 + (myPos.z - rz) ** 2;
+        const tx = dl < dr ? lx : rx, tz = dl < dr ? lz : rz;
+        const sx = tx - myPos.x, sz = tz - myPos.z;
+        const sideDist = Math.hypot(sx, sz);
+        if (sideDist > 0.01) {
+          // 全速绕侧（紧急，不用 ampFact）
+          const speed = Math.min(CFG.chickRunSpeed, sideDist / dt);
+          _tmpDesired.set(sx / sideDist * speed, 0, sz / sideDist * speed);
+        }
+      } else {
+        // ---- 正常槽位跟跑 ----
+        // leaderPos：第0只=母鸡锚点，其余=前一只的帧开头快照（不读积分后的 pbdPos，避免级联跟手）
+        if (i === 0) _leaderPos.copy(_henAnchor);
+        else _leaderPos.copy(startPos[i - 1]);
+
+        // chainDir：第0只 = -hen.forward；其余 = (pos[i-1] - leaderOfPrev) 归一（同样用帧开头快照）
+        if (i === 0) {
+          _chainDir.set(-hen.forward.x, 0, -hen.forward.z);
+        } else {
+          if (i === 1) _leaderOfPrev.copy(_henAnchor);
+          else _leaderOfPrev.copy(startPos[i - 2]);
+          const dx = startPos[i - 1].x - _leaderOfPrev.x, dz = startPos[i - 1].z - _leaderOfPrev.z;
+          const dl = dx * dx + dz * dz;
+          if (dl > 1e-4) { const d = Math.sqrt(dl); _chainDir.set(dx / d, 0, dz / d); }
+          else _chainDir.set(-hen.forward.x, 0, -hen.forward.z);
+        }
+
+        // slot = leaderPos + chainDir × spacing
+        _slot.set(
+          _leaderPos.x + _chainDir.x * CFG.chickSpacing, 0,
+          _leaderPos.z + _chainDir.z * CFG.chickSpacing
+        );
+        const toSx = _slot.x - myPos.x, toSz = _slot.z - myPos.z;
+        const dist = Math.hypot(toSx, toSz);
+        if (dist > 0.01) {
+          // 尾端鞭甩：ampFact 一次性系数，绝不复利
+          const ampFact = n > 1 ? (1 + i / (n - 1) * CFG.tailSpeedAmplify) : 1;
+          const speed = Math.min(CFG.chickRunSpeed * ampFact, dist / dt);
+          _tmpDesired.set(toSx / dist * speed, 0, toSz / dist * speed);
+        }
+      }
+
+      // 速度 MoveTowards（只动水平分量；本游戏全在 y=0 平面，y 速度恒 0）
+      _tmpHorz.set(c.vel.x, 0, c.vel.z);
+      moveTowards(_tmpHorz, _tmpHorz, _tmpDesired, CFG.chickRunAccel * dt);
+      c.vel.x = _tmpHorz.x; c.vel.z = _tmpHorz.z;
+
+      // 位置积分（行为层先积分，PBD 再投影修正）
+      pbdPos[i].x += c.vel.x * dt;
+      pbdPos[i].z += c.vel.z * dt;
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // [3] PBD 约束层：chainSubsteps 子步 × chainIterations 迭代
+    //     只约束拉伸；后半球独立大钳制；每子步速度阻尼
+    // ───────────────────────────────────────────────────────────────
+    computeHenAnchor(_henAnchor);     // 母鸡可能在 [1] 后位置已更新，重取
+    const henFx = hen.forward.x, henFz = hen.forward.z; // 约束层用 forward
+    const restLen = CFG.chickSpacing;
+    const maxLen = restLen * CFG.chainStretchLimit;
+    const maxCorr = CFG.chainMaxCorrection / CFG.chainSubsteps;
+
+    for (let sub = 0; sub < CFG.chainSubsteps; sub++) {
+      // b. 距离约束：只约束拉伸，不约束压缩
+      for (let iter = 0; iter < CFG.chainIterations; iter++) {
+        for (let i = 0; i < n; i++) {
+          const lx = i === 0 ? _henAnchor.x : pbdPos[i - 1].x;
+          const lz = i === 0 ? _henAnchor.z : pbdPos[i - 1].z;
+          const dx = pbdPos[i].x - lx, dz = pbdPos[i].z - lz;
+          const dist = Math.hypot(dx, dz);
+          if (dist <= maxLen || dist < 1e-4) continue;
+          const correction = dist - maxLen;
+          const dirx = dx / dist, dirz = dz / dist;
+          if (i === 0) {
+            // leader = 母鸡锚点（不动），小鸡承担 100%
+            let mx = -dirx * correction, mz = -dirz * correction;
+            // 钳制
+            const ml = Math.hypot(mx, mz);
+            if (ml > maxCorr) { mx = mx / ml * maxCorr; mz = mz / ml * maxCorr; }
+            pbdPos[i].x += mx; pbdPos[i].z += mz;
+          } else {
+            // 相邻对等质量各担 50%
+            let hx = dirx * (correction * 0.5), hz = dirz * (correction * 0.5);
+            const hl = Math.hypot(hx, hz);
+            if (hl > maxCorr) { hx = hx / hl * maxCorr; hz = hz / hl * maxCorr; }
+            pbdPos[i].x -= hx; pbdPos[i].z -= hz;
+            pbdPos[i - 1].x += hx; pbdPos[i - 1].z += hz;
+          }
+        }
+      }
+
+      // c. 后半球硬约束：小鸡在母鸡 forward 前方（dot>0.2）→ 投影到侧后切向
+      for (let i = 0; i < n; i++) {
+        const tcx = pbdPos[i].x - hen.pos.x, tcz = pbdPos[i].z - hen.pos.z;
+        const dotF = tcx * henFx + tcz * henFz;
+        if (dotF > 0.2) {
+          const toMag = Math.hypot(tcx, tcz);
+          // 切向 = toChick - forward·dot
+          const tanx = tcx - henFx * dotF, tanz = tcz - henFz * dotF;
+          const tanMag = Math.hypot(tanx, tanz);
+          let candx, candz;
+          if (tanMag > 1e-3) {
+            const keep = Math.max(0.1, toMag);
+            candx = hen.pos.x + tanx / tanMag * keep;
+            candz = hen.pos.z + tanz / tanMag * keep;
+          } else {
+            candx = hen.pos.x - henFx * CFG.chickSpacing;
+            candz = hen.pos.z - henFz * CFG.chickSpacing;
+          }
+          // 拉到 leader 允许范围内
+          const lx = i === 0 ? _henAnchor.x : pbdPos[i - 1].x;
+          const lz = i === 0 ? _henAnchor.z : pbdPos[i - 1].z;
+          const flx = candx - lx, flz = candz - lz;
+          const flMag = Math.hypot(flx, flz);
+          if (flMag > maxLen) {
+            candx = lx + flx / flMag * maxLen;
+            candz = lz + flz / flMag * maxLen;
+          }
+          // 用独立大钳制 BACK_HEMISPHERE_MAX_CORR
+          let corrx = candx - pbdPos[i].x, corrz = candz - pbdPos[i].z;
+          const cm = Math.hypot(corrx, corrz);
+          if (cm > BACK_HEMISPHERE_MAX_CORR) {
+            corrx = corrx / cm * BACK_HEMISPHERE_MAX_CORR;
+            corrz = corrz / cm * BACK_HEMISPHERE_MAX_CORR;
+          }
+          pbdPos[i].x += corrx; pbdPos[i].z += corrz;
+        }
+      }
+
+      // d. 小鸡间最小间距：Unity 原型靠刚体碰撞天然撑开，这里没有物理引擎，
+      //    链条又"只约束拉伸不约束压缩"，不加这条小鸡会叠死在同一点（实测会发生且不自愈）。
+      //    全对检查（n≤5 共 ≤10 对），各担 50%，重合时沿母鸡侧向确定性破对称。
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          let sx = pbdPos[j].x - pbdPos[i].x, sz = pbdPos[j].z - pbdPos[i].z;
+          const sd = Math.hypot(sx, sz);
+          if (sd >= CFG.chickMinSep) continue;
+          if (sd < 1e-4) {
+            // 完全重合：沿母鸡右侧方向推开（确定性，不用随机）
+            sx = -henFz; sz = henFx;
+          } else {
+            sx /= sd; sz /= sd;
+          }
+          let push = (CFG.chickMinSep - sd) * 0.5;
+          if (push > maxCorr) push = maxCorr;
+          pbdPos[i].x -= sx * push; pbdPos[i].z -= sz * push;
+          pbdPos[j].x += sx * push; pbdPos[j].z += sz * push;
+        }
+      }
+
+      // e. 子步速度阻尼（每子步乘一次，照 ChickChain.cs 在子步循环内施加）。
+      //    注意：每物理步的有效阻尼 = chainDamping^chainSubsteps（默认 0.96^3 ≈ 0.885），
+      //    面板标签已注明"每子步"，不要挪到子步循环外（会偏离参考手感）。
+      for (let i = 0; i < n; i++) {
+        chicks[i].vel.x *= CFG.chainDamping;
+        chicks[i].vel.z *= CFG.chainDamping;
+      }
+    }
+
+    // ── 写回位置（钳制场地内）──
+    for (let i = 0; i < n; i++) {
+      pbdPos[i].y = 0;
+      clampToArena(pbdPos[i], 0.3);
+      chicks[i].pos.copy(pbdPos[i]);
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [老鹰 AI] 三态机 ORBIT / ATTACK / RETREAT，M1 简版只制造压力
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const _eDesired = new THREE.Vector3();
+  const _flockCenter = new THREE.Vector3();
+
+  // 鸡群中心（母鸡 + 小鸡）水平
+  function flockCenter(out) {
+    let sx = hen.pos.x, sz = hen.pos.z, cnt = 1;
+    for (const c of chicks) { sx += c.pos.x; sz += c.pos.z; cnt++; }
+    out.set(sx / cnt, 0, sz / cnt);
+    return out;
+  }
+  // 队尾小鸡（最后一只）
+  function tailChick() { return chicks.length ? chicks[chicks.length - 1] : null; }
+
+  let caughtCount = 0;
+
+  function eagleStep(dt) {
+    // 冷却递减
+    if (eagle.dashCooldown > 0) eagle.dashCooldown -= dt;
+    if (eagle.dashTimer > 0) eagle.dashTimer -= dt;
+
+    flockCenter(_flockCenter);
+    const tail = tailChick();
+
+    let speedMul = 1.0;
+    let targetY = 1.6 + Math.sin(performance.now() * 0.002) * 0.15; // 轻微浮动
+
+    if (eagle.state === 'ORBIT') {
+      // 绕鸡群中心半径 ~10 盘旋
+      const R = 10;
+      eagle.orbitAngle += eagle.orbitDir * (CFG.eagleSpeed / R) * dt; // 角速度 = v/R
+      const tx = _flockCenter.x + Math.cos(eagle.orbitAngle) * R;
+      const tz = _flockCenter.z + Math.sin(eagle.orbitAngle) * R;
+      _eDesired.set((tx - eagle.pos.x), 0, (tz - eagle.pos.z));
+      const d = _eDesired.length();
+      if (d > 0.01) _eDesired.multiplyScalar(CFG.eagleSpeed / d);
+      // 伺机切 ATTACK：盘旋一会儿后进攻
+      eagle.attackTimer = (eagle.attackTimer || 0) + dt;
+      if (eagle.attackTimer > 1.6 && tail) {
+        eagle.state = 'ATTACK';
+        eagle.attackTimer = 0;
+        eagle.attackBestDist = Infinity;
+      }
+    } else if (eagle.state === 'ATTACK') {
+      eagle.attackTimer += dt;
+      if (!tail) { eagle.state = 'ORBIT'; eagle.attackTimer = 0; }
+      else {
+        const dx = tail.pos.x - eagle.pos.x, dz = tail.pos.z - eagle.pos.z;
+        const distToTail = Math.hypot(dx, dz);
+        // 朝队尾全速追
+        _eDesired.set(dx, 0, dz);
+        if (distToTail > 0.01) _eDesired.multiplyScalar(CFG.eagleSpeed / distToTail);
+
+        // 僵局检测：刷新最近距离
+        if (distToTail < eagle.attackBestDist - 0.05) {
+          eagle.attackBestDist = distToTail;
+          eagle.attackTimer = 0; // 有进展就重置僵局计时
+        }
+        // 距离 <6 且冲刺就绪 → 冲刺
+        if (distToTail < 6 && eagle.dashCooldown <= 0 && eagle.dashTimer <= 0) {
+          eagle.dashTimer = CFG.dashDuration;
+          eagle.dashCooldown = CFG.dashCooldown;
+        }
+        if (eagle.dashTimer > 0) {
+          speedMul = CFG.dashMultiplier;
+          targetY = 0.7; // 俯冲压低
+        }
+        // 冲刺中叼到队尾
+        if (eagle.dashTimer > 0 && distToTail < CATCH_RADIUS) {
+          onEagleCatch(tail);
+          eagle.state = 'RETREAT';
+          eagle.retreatTimer = 1.2;
+          eagle.dashTimer = 0;
+        }
+        // 僵局：ATTACK 持续 3s 没刷新更近 → 换方向重 ORBIT
+        if (eagle.attackTimer > 3.0) {
+          eagle.state = 'ORBIT';
+          eagle.orbitDir *= -1;
+          eagle.attackTimer = 0;
+          // 把盘旋角重置到当前相对鸡群中心的角度，避免镜头跳
+          eagle.orbitAngle = Math.atan2(eagle.pos.z - _flockCenter.z, eagle.pos.x - _flockCenter.x);
+        }
+      }
+    } else if (eagle.state === 'RETREAT') {
+      eagle.retreatTimer -= dt;
+      // 飞离鸡群中心
+      const dx = eagle.pos.x - _flockCenter.x, dz = eagle.pos.z - _flockCenter.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.01) _eDesired.set(dx / d * CFG.eagleSpeed, 0, dz / d * CFG.eagleSpeed);
+      else _eDesired.set(CFG.eagleSpeed, 0, 0);
+      targetY = 2.2; // 拉升
+      if (eagle.retreatTimer <= 0) {
+        eagle.state = 'ORBIT';
+        eagle.attackTimer = 0;
+        eagle.orbitAngle = Math.atan2(eagle.pos.z - _flockCenter.z, eagle.pos.x - _flockCenter.x);
+      }
+    }
+
+    // 速度 MoveTowards 加速（×speedMul 应用于目标速度）
+    _eDesired.multiplyScalar(speedMul);
+    moveTowards(eagle.vel, eagle.vel, _eDesired, CFG.eagleAccel * speedMul * dt);
+    eagle.pos.x += eagle.vel.x * dt;
+    eagle.pos.z += eagle.vel.z * dt;
+    clampToArena(eagle.pos, 0.5);
+
+    // 高度平滑趋近 targetY
+    eagle.targetY = targetY;
+    eagle.pos.y += (eagle.targetY - eagle.pos.y) * smoothFactor(6, dt);
+
+    // 朝向 = 速度方向
+    if (eagle.vel.lengthSq() > 0.04) {
+      const ty = Math.atan2(eagle.vel.x, eagle.vel.z);
+      eagle.yaw = turnTowardsAngle(eagle.yaw, ty, 360, dt);
+    }
+    eagle.forward.set(Math.sin(eagle.yaw), 0, Math.cos(eagle.yaw));
+  }
+
+  // 老鹰叼到队尾：toast + 计数 + 该小鸡闪烁（不移除）
+  function onEagleCatch(c) {
+    caughtCount++;
+    document.getElementById('caught-num').textContent = caughtCount;
+    showToast('🪶 老鹰叼到了队尾！(M1 演示，不真抓走)');
+    c.flashTimer = 1.0;
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [渲染同步 + 程序动画] 把物理状态 → Mesh，走路颠簸/摆腿、老鹰扇翅、朝向平滑
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  function syncVisuals(dt) {
+    // ── 母鸡 ──
+    {
+      const ud = hen.mesh.userData;
+      const speed = Math.hypot(hen.vel.x, hen.vel.z);
+      hen.bob += speed * dt * 6;
+      const bobAmt = Math.min(speed / CFG.henSpeed, 1) * 0.08;
+      hen.mesh.position.set(hen.pos.x, hen.pos.y + Math.abs(Math.sin(hen.bob)) * bobAmt, hen.pos.z);
+      hen.mesh.rotation.y = hen.yaw;
+      // 摆腿（幅度随速度）
+      const legSwing = Math.sin(hen.bob) * Math.min(speed / CFG.henSpeed, 1) * 0.5;
+      ud.legL.rotation.x = legSwing;
+      ud.legR.rotation.x = -legSwing;
+      // 轻微身体摇摆
+      hen.mesh.rotation.z = Math.sin(hen.bob) * 0.02 * Math.min(speed / CFG.henSpeed, 1);
+    }
+    // ── 小鸡 ──
+    for (const c of chicks) {
+      const ud = c.mesh.userData;
+      const speed = Math.hypot(c.vel.x, c.vel.z);
+      c.bob += speed * dt * 9;
+      const bobAmt = Math.min(speed / CFG.chickRunSpeed, 1) * 0.07;
+      c.mesh.position.set(c.pos.x, c.pos.y + Math.abs(Math.sin(c.bob)) * bobAmt, c.pos.z);
+      // 朝向 = 速度方向平滑
+      if (speed > 0.2) {
+        const ty = Math.atan2(c.vel.x, c.vel.z);
+        c.yaw = turnTowardsAngle(c.yaw, ty, 540, dt);
+      }
+      c.mesh.rotation.y = c.yaw;
+      const legSwing = Math.sin(c.bob) * Math.min(speed / CFG.chickRunSpeed, 1) * 0.6;
+      ud.legL.rotation.x = legSwing;
+      ud.legR.rotation.x = -legSwing;
+      // 被叼闪烁
+      if (c.flashTimer > 0) {
+        c.flashTimer -= dt;
+        const on = Math.floor(c.flashTimer * 10) % 2 === 0;
+        ud.body.material = on ? mat(0xff5555) : mat(ud.baseColor);
+        if (c.flashTimer <= 0) ud.body.material = mat(ud.baseColor);
+      }
+    }
+    // ── 老鹰 ──
+    {
+      const ud = eagle.mesh.userData;
+      eagle.wingPhase += dt * 11; // 持续扇动
+      eagle.mesh.position.set(eagle.pos.x, eagle.pos.y, eagle.pos.z);
+      eagle.mesh.rotation.y = eagle.yaw;
+      const flap = Math.sin(eagle.wingPhase) * 0.6;
+      ud.wingL.rotation.z = flap;
+      ud.wingR.rotation.z = -flap;
+      // 俯冲时机头下压
+      const pitchTarget = (eagle.state === 'ATTACK' && eagle.dashTimer > 0) ? 0.35 : 0;
+      eagle.mesh.rotation.x += (pitchTarget - eagle.mesh.rotation.x) * smoothFactor(8, dt);
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [相机] 动态取景：固定偏航俯角，框住全部角色，注视点+距离指数平滑
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const camFocus = new THREE.Vector3(0, 0, 0);  // 平滑后的注视点
+  let camDist = 34;                              // 平滑后的距离
+  const CAM_PITCH = 45 * Math.PI / 180;          // 俯角 45°
+  const CAM_YAW = 0;                             // 从场地南侧看（沿 +Z 看向 -Z）
+
+  function updateCamera(dt) {
+    // 水平包围盒：母鸡 + 全部小鸡 + 老鹰
+    let minX = hen.pos.x, maxX = hen.pos.x, minZ = hen.pos.z, maxZ = hen.pos.z;
+    function extend(p) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+    }
+    for (const c of chicks) extend(c.pos);
+    extend(eagle.pos);
+    const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+    const sizeX = (maxX - minX), sizeZ = (maxZ - minZ);
+
+    // 按包围盒尺寸 + fov/aspect 算能框住全部角色的距离（边距 1.3）
+    const margin = 1.3;
+    const fovV = camera.fov * Math.PI / 180;
+    const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
+    const distForX = (sizeX * margin * 0.5) / Math.tan(fovH / 2);
+    // distForZ：相机以 CAM_PITCH 俯角俯视，垂直 FOV 投到地面的 Z 深度被 sin(pitch) 压缩，
+    // 故所需距离要除以 sin(CAM_PITCH)（45° 时约 ×1.414），否则角色在 Z 向分散时会被裁出画面。
+    const distForZ = (sizeZ * margin * 0.5) / (Math.tan(fovV / 2) * Math.sin(CAM_PITCH));
+    let wantDist = Math.max(distForX, distForZ, 16);
+    // 上限放宽到 80：竖屏(aspect≈0.5)时 distForX 系数大，老鹰冲到另一侧会触发旧的 60 钳位导致出框。
+    wantDist = clamp(wantDist, 16, 80);
+
+    // 注视点 + 距离指数平滑（rate=3）
+    const k = smoothFactor(3, dt);
+    camFocus.x += (cx - camFocus.x) * k;
+    camFocus.z += (cz - camFocus.z) * k;
+    camFocus.y += (0.6 - camFocus.y) * k; // 略抬一点看角色身体
+    camDist += (wantDist - camDist) * k;
+
+    // 由注视点 + 固定偏航/俯角 + 距离反算相机位置
+    // 相机在注视点的 +Z 侧、上方（南侧俯视）
+    const horiz = Math.cos(CAM_PITCH) * camDist;
+    const vert = Math.sin(CAM_PITCH) * camDist;
+    camera.position.set(
+      camFocus.x + Math.sin(CAM_YAW) * horiz,
+      camFocus.y + vert,
+      camFocus.z + Math.cos(CAM_YAW) * horiz
+    );
+    camera.lookAt(camFocus.x, camFocus.y, camFocus.z);
+
+    // 太阳目标跟随注视点，让阴影始终在画面内
+    sun.target.position.set(camFocus.x, 0, camFocus.z);
+    sun.position.set(camFocus.x + 28, 46, camFocus.z + 20);
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [固定步长主循环] 累加器 60Hz，frameDt 钳制 ≤0.1s 防螺旋死亡
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  let lastTime = performance.now();
+  let accumulator = 0;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    let frameDt = (now - lastTime) / 1000;
+    lastTime = now;
+    if (frameDt > MAX_FRAME_DT) frameDt = MAX_FRAME_DT; // 防螺旋死亡
+    accumulator += frameDt;
+
+    // 固定步长推进物理（仅开局后）
+    while (accumulator >= FIXED_DT) {
+      if (started) {
+        physicsStep(FIXED_DT);
+        eagleStep(FIXED_DT);   // 开局冻结期间老鹰静止（started=false 时整个 if 跳过）
+      }
+      accumulator -= FIXED_DT;
+    }
+
+    // 渲染同步用真实帧 dt（动画/相机平滑帧率无关）
+    syncVisuals(frameDt);
+    updateCamera(frameDt);
+    renderer.render(scene, camera);
+  }
+
+  // 初次把 Mesh 摆到位（冻结时也要显示）
+  function initialSync() {
+    hen.mesh.position.set(hen.pos.x, hen.pos.y, hen.pos.z);
+    hen.mesh.rotation.y = hen.yaw;
+    for (const c of chicks) { c.mesh.position.set(c.pos.x, c.pos.y, c.pos.z); c.mesh.rotation.y = c.yaw; }
+    eagle.mesh.position.set(eagle.pos.x, eagle.pos.y, eagle.pos.z);
+    eagle.mesh.rotation.y = eagle.yaw;
+    // 相机先对准一次
+    updateCamera(1.0);
+  }
+  initialSync();
+  requestAnimationFrame(loop);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [UI] Toast / 响应式 resize / 调参面板
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  let toastTimer = null;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+  }
+
+  // 响应式
+  function onResize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  }
+  window.addEventListener('resize', onResize);
+  onResize();
+
+  // ---- 调参面板 ----
+  // 每条：key / 标签 / min / max / step
+  const PANEL_SPECS = [
+    ['henSpeed',        '母鸡速度 henSpeed',         3,    10,    0.1],
+    ['henTurnSpeed',    '母鸡转速 henTurnSpeed',     120,  480,   5],
+    ['chickRunSpeed',   '小鸡速度 chickRunSpeed',    4,    14,    0.1],
+    ['chickRunAccel',   '小鸡加速 chickRunAccel',    10,   80,    1],
+    ['chainDamping',    '子步阻尼 chainDamping(每子步)', 0.90, 0.995, 0.001],
+    ['tailSpeedAmplify','尾端放大 tailSpeedAmplify', 0,    0.8,   0.01],
+    ['chickSpacing',    '链节间距 chickSpacing',     0.5,  1.5,   0.01],
+  ];
+
+  function buildPanel() {
+    const wrap = document.getElementById('panel-rows');
+    wrap.innerHTML = '';
+    for (const [key, label, min, max, step] of PANEL_SPECS) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const id = 'rng-' + key;
+      row.innerHTML =
+        '<label><span>' + label + '</span><span class="val" id="val-' + key + '">' + fmt(CFG[key], step) + '</span></label>' +
+        '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + CFG[key] + '">';
+      wrap.appendChild(row);
+      const input = row.querySelector('input');
+      input.addEventListener('input', () => {
+        CFG[key] = parseFloat(input.value);
+        document.getElementById('val-' + key).textContent = fmt(CFG[key], step);
+        // chickSpacing 改变会让链条重排，但保留现状（实时拉伸，符合"实时生效"）
+      });
+    }
+  }
+  function fmt(v, step) {
+    // 按步长决定小数位
+    if (step >= 1) return v.toFixed(0);
+    if (step >= 0.1) return v.toFixed(1);
+    if (step >= 0.01) return v.toFixed(2);
+    return v.toFixed(3);
+  }
+  function syncPanelInputs() {
+    for (const [key, , , , step] of PANEL_SPECS) {
+      const input = document.getElementById('rng-' + key);
+      if (input) { input.value = CFG[key]; document.getElementById('val-' + key).textContent = fmt(CFG[key], step); }
+    }
+  }
+  function togglePanel() {
+    panelOpen = !panelOpen;
+    document.getElementById('panel').classList.toggle('open', panelOpen);
+  }
+  document.getElementById('panel-close').addEventListener('click', togglePanel);
+  document.getElementById('hud-hint').addEventListener('click', togglePanel); // 触屏也能开
+  document.getElementById('panel-reset').addEventListener('click', () => {
+    for (const [key] of PANEL_SPECS) CFG[key] = DEFAULTS[key];
+    syncPanelInputs();
+    showToast('↺ 已恢复默认参数');
+  });
+  buildPanel();
+
+  </script>
+</body>
+</html>

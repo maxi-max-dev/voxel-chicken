@@ -129,27 +129,92 @@
   .win-big.win  { color: #8fe388; }
   .win-big.lose { color: #ff7a7a; }
 
-  /* ===== 移动端虚拟控件 ===== */
-  #touch-ui { position: fixed; inset: 0; z-index: 12; display: none; pointer-events: none; }
+  /* ===== 移动端虚拟控件（M3）===== */
+  /* 整个游戏区域禁手势滚动/缩放（触屏才挂 .touch 到 body）*/
+  body.touch, body.touch #game-canvas { touch-action: none; }
+  #touch-ui { position: fixed; inset: 0; z-index: 12; display: none; pointer-events: none; touch-action: none; }
   #touch-ui.on { display: block; }
-  .stick-base {
-    position: absolute; bottom: 26px; width: 116px; height: 116px; border-radius: 50%;
-    background: rgba(255,255,255,0.10); border: 2px solid rgba(255,255,255,0.22); pointer-events: auto; touch-action: none;
+
+  /* 左半屏：动态原点虚拟摇杆（按下处生成；JS 控制 left/top/display）*/
+  #stick-move {
+    position: absolute; width: 132px; height: 132px; border-radius: 50%;
+    background: rgba(255,255,255,0.10); border: 2px solid rgba(255,255,255,0.28);
+    transform: translate(-50%, -50%); display: none; pointer-events: none; touch-action: none;
+    box-shadow: 0 0 12px rgba(0,0,0,0.18);
   }
-  .stick-base.left  { left: 22px; }
-  .stick-base.right { right: 22px; }
-  .stick-knob {
-    position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
-    border-radius: 50%; background: rgba(255,255,255,0.35); pointer-events: none;
+  #stick-move.show { display: block; }
+  #knob-move {
+    position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px;
+    border-radius: 50%; background: rgba(255,255,255,0.42); border: 2px solid rgba(255,255,255,0.5);
+    pointer-events: none;
   }
+
+  /* 右下：技能大按钮（≥64px，冷却扇形罩）*/
   #touch-skill {
-    position: absolute; right: 150px; bottom: 78px; width: 78px; height: 78px; border-radius: 50%;
-    background: rgba(255,209,102,0.85); color: #1a1a1a; font-weight: 800; font-size: 13px;
-    display: flex; align-items: center; justify-content: center; text-align: center;
+    position: absolute; right: 24px; bottom: 30px; width: 88px; height: 88px; border-radius: 50%;
+    background: rgba(255,209,102,0.9); color: #1a1a1a; font-weight: 800; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; text-align: center; padding: 6px;
     pointer-events: auto; touch-action: none; overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3); line-height: 1.15;
   }
-  #touch-skill .cd-fill { position: absolute; left:0; bottom:0; width:100%; height:0%; background: rgba(0,0,0,0.45); }
+  #touch-skill.ready  { background: rgba(143,227,136,0.92); }
+  #touch-skill.active { background: rgba(255,209,102,0.55); }
+  /* 冷却扇形：conic-gradient 旋转遮罩（0=就绪无罩，1=整圈灰）*/
+  #touch-skill .cd-arc {
+    position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+    background: conic-gradient(rgba(0,0,0,0.5) 0deg, rgba(0,0,0,0.5) 0deg, transparent 0deg);
+  }
   #touch-skill span { position: relative; z-index: 2; }
+  #touch-skill:active { transform: scale(0.94); }
+
+  /* 右上：📷 视角 + 🔇 静音 小按钮（≥44px tap）*/
+  #touch-btns { position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; pointer-events: none; }
+  .touch-btn {
+    width: 46px; height: 46px; border-radius: 12px; pointer-events: auto; touch-action: none;
+    background: rgba(20,24,30,0.6); backdrop-filter: blur(3px); color: #fff; border: none;
+    font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .touch-btn:active { transform: scale(0.92); background: rgba(20,24,30,0.85); }
+
+  /* ===== 全屏闪白（脱链反馈，M3）===== */
+  #screen-flash {
+    position: fixed; inset: 0; z-index: 40; background: #fff; opacity: 0;
+    pointer-events: none; transition: none;
+  }
+
+  /* ===== 开局教学提示条（M3，按角色一行，自动淡出）===== */
+  #tutorial {
+    position: fixed; z-index: 28; left: 50%; bottom: 34%; transform: translateX(-50%);
+    background: rgba(20,24,30,0.7); color: #fff; padding: 10px 18px; border-radius: 12px;
+    font-size: clamp(13px, 3.4vw, 16px); font-weight: 600; backdrop-filter: blur(3px);
+    opacity: 0; transition: opacity 0.5s; pointer-events: none; text-align: center;
+    max-width: calc(100vw - 32px); box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  }
+  #tutorial.show { opacity: 1; }
+
+  /* ===== 窄屏 / 竖屏 HUD 收紧（M3）：缩小内边距与字号，避免触屏控件重叠 ===== */
+  @media (max-width: 480px) {
+    .hud { font-size: 12px; padding: 6px 9px; }
+    #hud-top { gap: 10px; font-size: 13px; }
+    #hud-top .timer { font-size: 18px; }
+    #hud-top .score .num { font-size: 18px; }
+    #hud-cam { display: none; }   /* 触屏改用 📷 按钮，隐藏文字提示 */
+    #hud-hint { display: none; }  /* 触屏用 ⚙️ 按钮在面板里，隐藏右下角文字 */
+    /* 桌面底中技能提示在触屏上隐藏（用右下大按钮代替）*/
+    body.touch #hud-skill { display: none; }
+  }
+  /* 竖屏专属：HUD 顶部更紧凑，技能按钮略缩 */
+  @media (orientation: portrait) {
+    #hud-status { top: 46px; }
+    #touch-skill { width: 78px; height: 78px; bottom: 26px; right: 18px; }
+  }
+  /* 横屏矮屏（如 844×390）：避免顶部 HUD 与边缘控件挤一起 */
+  @media (orientation: landscape) and (max-height: 430px) {
+    #hud-top { top: 8px; }
+    #touch-btns { top: 8px; }
+    #touch-skill { bottom: 18px; }
+    #stick-move { width: 116px; height: 116px; }
+  }
 
   /* ===== 调参面板 ===== */
   #panel {
@@ -196,8 +261,12 @@
     </div>
   </div>
   <div id="toast"></div>
+  <!-- 开局教学提示（M3，按角色一行，5s 淡出） -->
+  <div id="tutorial"></div>
   <!-- 屏幕边缘威胁指示（目标在视野外） -->
   <div id="threat-arrow"></div>
+  <!-- 全屏闪白（脱链反馈，M3） -->
+  <div id="screen-flash"></div>
 
   <!-- 覆盖层（选角 / 待机 / 结算共用，按 phase 切内容）-->
   <div id="overlay">
@@ -237,11 +306,17 @@
     </div>
   </div>
 
-  <!-- 移动端虚拟控件（左移动 / 右朝向 / 单技能键）-->
+  <!-- 移动端虚拟控件（M3：左半屏动态摇杆 / 右下技能 / 右上 视角+静音）-->
   <div id="touch-ui">
-    <div class="stick-base left"  id="stick-move"><div class="stick-knob" id="knob-move"></div></div>
-    <div class="stick-base right" id="stick-look"><div class="stick-knob" id="knob-look"></div></div>
-    <div id="touch-skill"><div class="cd-fill" id="touch-cd"></div><span id="touch-skill-label">技能</span></div>
+    <!-- 动态原点左摇杆：按下左半屏时 JS 把它移到触点处显示 -->
+    <div id="stick-move"><div id="knob-move"></div></div>
+    <!-- 右下技能大按钮（冷却扇形罩 + 名称）-->
+    <div id="touch-skill"><div class="cd-arc" id="touch-cd"></div><span id="touch-skill-label">技能</span></div>
+    <!-- 右上：📷 视角 / 🔇 静音 -->
+    <div id="touch-btns">
+      <button class="touch-btn" id="btn-cam" title="切换视角">📷</button>
+      <button class="touch-btn" id="btn-mute" title="静音">🔊</button>
+    </div>
   </div>
 
   <!-- 调参面板 -->
@@ -715,6 +790,7 @@
     bob: 0,                 // 走路上下颠相位
     // ── 翅膀（技能：开/收切换；wingOpen 目标，wingT 0→1 动画进度）──
     wingOpen: false,
+    _lastWingOpen: false,   // 上帧目标（检测翻转播扑哧音）
     wingT: 0,
     // ── 踉跄（翅膀超时/护盾超时，调研指令 #4/#12）──
     staggerTimer: 0,
@@ -763,6 +839,7 @@
         crouchTimer: 0,
         crouchCd: 0,
         playerSteer: new THREE.Vector3(),   // 玩家小鸡本帧期望方向（仅 controlled 小鸡非零）
+        staggerAnim: 0,                     // near-miss 趔趄动画剩余（M3，纯视觉）
       });
     }
     // 开局脱手保护期（对应 ChickChain._buildGrace = 2f）
@@ -879,7 +956,8 @@
   // 返回的是要喂给链条物理"母鸡期望速度"的世界方向；物理数学不变，只换这个来源。
   //  - top  ：世界轴向（M1 现状）。镜头南侧看 → W=-Z 远离镜头。
   //  - follow：把屏幕输入按相机 yaw 旋转成世界方向（推哪个屏幕方向就往哪跑）。
-  //  - fps  ：坦克式。W/S 沿角色 forward 进退（后退 0.5 倍速）；A/D 原地转向（直接转 yaw）。
+  //  - fps  ：坦克式。W/S（左摇杆上下）沿角色 forward 进退（后退 0.5 倍速）；A/D（左摇杆左右）原地转向。
+  // M3：移除右朝向摇杆，单左摇杆通吃 —— fps 用左摇杆 x 当转向，follow/top 用左摇杆向量当移动。
   // fpsTankTurn 标志：fps 下输入已直接驱动 yaw，physicsStep 里不要再用"速度方向"覆盖朝向。
   const inputDir = new THREE.Vector3();
   let fpsTankTurn = false;
@@ -890,28 +968,25 @@
     const left  = keys['KeyA'] || keys['ArrowLeft'];
     const right = keys['KeyD'] || keys['ArrowRight'];
 
-    // ── 移动端右摇杆：改朝向（直接转 controlled.yaw，调研指令 #13）──
-    if (IS_TOUCH && Math.abs(touchLook.x) > 0.15) {
-      controlled.yaw += touchLook.x * (CFG.henTurnSpeed * Math.PI / 180) * (dt || 0);
-      controlled.forward.set(Math.sin(controlled.yaw), 0, Math.cos(controlled.yaw));
-      camYaw = controlled.yaw;   // 让 follow 相机跟上手动转向
-    }
-    // ── 移动端左摇杆：移动（folded 进 x/z，下方与 WASD 合流）──
-    const tmx = (IS_TOUCH && (Math.abs(touchMove.x) > 0.15 || Math.abs(touchMove.y) > 0.15)) ? touchMove.x : 0;
-    const tmy = (IS_TOUCH && (Math.abs(touchMove.x) > 0.15 || Math.abs(touchMove.y) > 0.15)) ? touchMove.y : 0;
+    // ── 移动端左摇杆：移动（死区 0.15，folded 进 x/z，下方与 WASD 合流）──
+    const tmActive = IS_TOUCH && (Math.abs(touchMove.x) > 0.15 || Math.abs(touchMove.y) > 0.15);
+    const tmx = tmActive ? touchMove.x : 0;
+    const tmy = tmActive ? touchMove.y : 0;
 
     if (camMode === 'fps') {
       // ── 坦克式控制 ──
       // forward = (sin yaw, cos yaw)；d(forward)/d(yaw) = (cos yaw, -sin yaw) = 角色右手向量。
       // 故 yaw 增大 = 朝右转。D 增 yaw（右转），A 减 yaw（左转）。
       fpsTankTurn = true;
-      const turnDeg = (controlled === hen) ? CFG.henTurnSpeed : CFG.henTurnSpeed; // 母鸡用 henTurnSpeed；M2 其它角色可分支
+      const turnDeg = CFG.henTurnSpeed;        // 母鸡转速；M2 其它角色可分支
       let turn = 0;
       if (right) turn += 1;
       if (left)  turn -= 1;
+      if (Math.abs(tmx) > 0.15) turn += tmx;   // 触屏左摇杆左右 = 转向
       controlled.yaw += turn * (turnDeg * Math.PI / 180) * (dt || 0);
       controlled.forward.set(Math.sin(controlled.yaw), 0, Math.cos(controlled.yaw));
-      // W/S 沿 forward 进退（后退 0.5 倍速；模长 <1 体现倍速，下游乘 henSpeed）
+      camYaw = controlled.yaw;                 // 让 follow 相机记忆跟上手动转向
+      // W/S（或左摇杆上下）沿 forward 进退（后退 0.5 倍速；模长 <1 体现倍速，下游乘 henSpeed）
       let drive = 0;
       if (up)   drive += 1;
       if (down) drive -= 0.5;
@@ -1309,6 +1384,9 @@
     for (let k = 0; k < chicks.length; k++) chicks[k].index = k;
     refreshChickMarker();   // 队尾可能变了
     showToast('🔗 链断了！脱链小鸡快跑回队尾');
+    sfxPop();               // 脱链 pop（M3）
+    flashWhite(0.18);       // 断点闪白（M3）
+    screenShake(0.35, 0.18);// 轻微屏震（M3）
   }
 
   // 把脱链小鸡接回队尾
@@ -1321,6 +1399,8 @@
     chicks.push(c);
     c.mesh.userData.body.material = mat(c.mesh.userData.baseColor);
     refreshChickMarker();
+    sfxClick();             // 重连 click（M3）
+    spawnHeart(c);          // 小鸡头顶 ❤ 一闪（M3）
   }
 
   const _tailPos = new THREE.Vector3();
@@ -1463,6 +1543,7 @@
         eagle.dashTimer = CFG.dashDuration;
         eagle.dashCooldown = CFG.dashCooldown;
         eagle.dashGotCatch = false;   // 本次冲刺尚未抓到（用于扑空翻滚判定）
+        sfxDive();                    // 俯冲风声（起冲瞬间，M3）
       }
     }
 
@@ -1650,7 +1731,7 @@
       for (const c of all) {
         if (c.crouchTimer > 0) continue;
         const d = Math.hypot(c.pos.x - eagle.pos.x, c.pos.z - eagle.pos.z);
-        if (d < NEAR_MISS_RADIUS) { triggerNearMiss(); nearMissCd = 1.5; break; }
+        if (d < NEAR_MISS_RADIUS) { triggerNearMiss(c); nearMissCd = 1.5; break; }
       }
     }
   }
@@ -1674,6 +1755,8 @@
     if (c === controlledChick) refreshChickMarker();   // 玩家小鸡被抓 → 迁移到新队尾
     refreshChickMarker();
     spawnStars(c.pos.x, c.pos.y + 0.4, c.pos.z, 0xffe14d);
+    spawnFeathers(c.pos.x, c.pos.y + 0.35, c.pos.z, 0xffe14d);  // 方块羽毛爆开（M3）
+    timeScale = 0.3; timeScaleTimer = 0.3;                       // 0.3s 慢动作（M3）
     sfxCatch();
     showToast('🪶 老鹰叼走一只！(' + stats.caught + '/' + CFG.catchesToWin + ')');
     // 得手"吞咽"僵直（被弹开 0.9s）
@@ -1913,6 +1996,8 @@
   function beginRound() {
     phase = PHASE.RUNNING;
     timeLeft = CFG.roundSeconds;
+    lastTickSec = -1;          // 重置滴答（M3）
+    showTutorial();            // 开局操作提示（M3，按角色，5s 淡出）
     overlayEl().classList.add('hide');
   }
 
@@ -1994,6 +2079,7 @@
   let timeScale = 1;          // 全局时间缩放（near-miss 慢动作）
   let timeScaleTimer = 0;     // 慢动作剩余
   let blindTimer = 0;         // AI 老鹰被致盲剩余（调研指令 #10，致盲子技能保留接口）
+  let lastTickSec = -1;       // 倒计时滴答：上次播音的整秒（M3，防同秒重播）
 
   // 星星粒子池（THREE.Points），一次性 burst，淡出
   const STAR_MAX = 120;
@@ -2033,28 +2119,222 @@
     }
     if (anyAlive) starGeo.attributes.position.needsUpdate = true;
   }
-  function triggerNearMiss() {
-    timeScale = 0.3; timeScaleTimer = 0.2;   // 0.2s 慢动作
-    sfxHeartbeat();
+
+  // ── 方块羽毛粒子池（M3 抓到爆开）：N 个小 BoxGeometry，对象池复用，抛物线散落 + 旋转 + 淡出 ──
+  // 主循环零 new：mesh / 速度 / 角速度 全预建，spawn 只重置数据。
+  const FEATHER_MAX = 48;
+  const feathers = [];
+  {
+    const fgeo = new THREE.BoxGeometry(0.16, 0.05, 0.16);   // 扁方块羽毛片
+    const fmat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 1 });
+    // 每片单独 material（要各自淡出 opacity），但共用 geometry
+    for (let i = 0; i < FEATHER_MAX; i++) {
+      const m = new THREE.Mesh(fgeo, fmat.clone());
+      m.castShadow = false; m.visible = false;
+      scene.add(m);
+      feathers.push({
+        mesh: m, life: 0,
+        vx: 0, vy: 0, vz: 0,        // 线速度
+        rx: 0, ry: 0, rz: 0,        // 角速度
+      });
+    }
+  }
+  let featherCursor = 0;
+  function spawnFeathers(x, y, z, color) {
+    for (let k = 0; k < 12; k++) {
+      const f = feathers[featherCursor]; featherCursor = (featherCursor + 1) % FEATHER_MAX;
+      f.mesh.material.color.setHex(color);
+      f.mesh.material.opacity = 1;
+      f.mesh.visible = true;
+      f.mesh.position.set(x, y, z);
+      f.mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
+      const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 3;
+      f.vx = Math.cos(a) * sp; f.vy = 3 + Math.random() * 3.5; f.vz = Math.sin(a) * sp;
+      f.rx = (Math.random() - 0.5) * 14; f.ry = (Math.random() - 0.5) * 14; f.rz = (Math.random() - 0.5) * 14;
+      f.life = 0.8 + Math.random() * 0.4;
+    }
+  }
+  function updateFeathers(dt) {
+    for (let i = 0; i < FEATHER_MAX; i++) {
+      const f = feathers[i];
+      if (f.life <= 0) continue;
+      f.life -= dt;
+      if (f.life <= 0) { f.mesh.visible = false; continue; }
+      f.vy -= 12 * dt;                        // 重力
+      const p = f.mesh.position;
+      p.x += f.vx * dt; p.y += f.vy * dt; p.z += f.vz * dt;
+      if (p.y < 0.05) { p.y = 0.05; f.vy *= -0.35; f.vx *= 0.6; f.vz *= 0.6; }  // 落地小弹
+      f.mesh.rotation.x += f.rx * dt; f.mesh.rotation.y += f.ry * dt; f.mesh.rotation.z += f.rz * dt;
+      if (f.life < 0.35) f.mesh.material.opacity = f.life / 0.35;   // 末段淡出
+    }
   }
 
-  // ---- Web Audio（零资源，全程序合成）----
-  let actx = null;
-  function audioInit() { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (actx && actx.state === 'suspended') actx.resume(); }
-  function beep(freq, dur, type, gain) {
-    if (!actx) return;
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = type || 'square'; o.frequency.value = freq;
-    g.gain.value = gain || 0.08;
-    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
-    o.connect(g); g.connect(actx.destination);
-    o.start(); o.stop(actx.currentTime + dur);
+  // ── 头顶 ❤ 弹出池（M3 重连）：复用 N 个 sprite-less 红方块“❤”，飘升淡出 ──
+  const HEART_MAX = 6;
+  const hearts = [];
+  {
+    // 用两块红方块拼一个粗略心形（左右两瓣），挂在一个 Group 下，整组飘升
+    for (let i = 0; i < HEART_MAX; i++) {
+      const g = new THREE.Group();
+      const m1 = box(0.16, 0.16, 0.05, -0.07, 0.05, 0, 0xff5a7a, false);
+      const m2 = box(0.16, 0.16, 0.05,  0.07, 0.05, 0, 0xff5a7a, false);
+      const m3 = box(0.18, 0.16, 0.05,  0,   -0.06, 0, 0xff5a7a, false);
+      g.add(m1); g.add(m2); g.add(m3);
+      g.visible = false;
+      scene.add(g);
+      hearts.push({ group: g, life: 0, mats: [m1.material, m2.material, m3.material] });
+    }
   }
-  function sfxCatch() { beep(180, 0.18, 'sawtooth', 0.12); setTimeout(() => beep(120, 0.2, 'sawtooth', 0.1), 60); }
-  function sfxThud() { beep(90, 0.22, 'square', 0.14); }                 // 喜剧碰撞声（扑空）
+  // 让心形方块的材质可透明（mat() 缓存的 material 默认不透明，这里克隆一份独立的）
+  for (const h of hearts) {
+    h.mats = h.mats.map((mm) => { const c = mm.clone(); c.transparent = true; return c; });
+    h.group.children.forEach((ch, idx) => { ch.material = h.mats[idx]; });
+  }
+  let heartCursor = 0;
+  function spawnHeart(c) {
+    const h = hearts[heartCursor]; heartCursor = (heartCursor + 1) % HEART_MAX;
+    h.group.position.set(c.pos.x, c.pos.y + 0.9, c.pos.z);
+    h.group.visible = true;
+    h.life = 0.9;
+    for (const mm of h.mats) mm.opacity = 1;
+  }
+  function updateHearts(dt) {
+    for (let i = 0; i < HEART_MAX; i++) {
+      const h = hearts[i];
+      if (h.life <= 0) continue;
+      h.life -= dt;
+      if (h.life <= 0) { h.group.visible = false; continue; }
+      h.group.position.y += 1.4 * dt;                 // 飘升
+      const sc = 0.8 + (0.9 - h.life) * 0.6;          // 略放大
+      h.group.scale.setScalar(sc);
+      const op = clamp01(h.life / 0.4);
+      for (const mm of h.mats) mm.opacity = op;
+    }
+  }
+
+  // ── 全屏闪白 + 屏震（M3 脱链反馈）。闪白用 DOM 覆盖层；屏震偏移 canvas transform ──
+  let flashTimer = 0, flashDur = 0;
+  const flashEl = document.getElementById('screen-flash');
+  function flashWhite(dur) { flashDur = dur; flashTimer = dur; }
+  let shakeTimer = 0, shakeDur = 0, shakeMag = 0;
+  function screenShake(mag, dur) { shakeMag = mag; shakeDur = dur; shakeTimer = dur; }
+  function updateScreenFx(dt) {
+    // 闪白淡出
+    if (flashTimer > 0) {
+      flashTimer = Math.max(0, flashTimer - dt);
+      flashEl.style.opacity = (flashTimer / flashDur * 0.7).toFixed(3);
+    } else if (flashEl.style.opacity !== '0') {
+      flashEl.style.opacity = '0';
+    }
+    // 屏震：随机抖 canvas，衰减
+    if (shakeTimer > 0) {
+      shakeTimer = Math.max(0, shakeTimer - dt);
+      const k = shakeTimer / shakeDur;
+      const px = (Math.random() - 0.5) * shakeMag * k * 22;
+      const py = (Math.random() - 0.5) * shakeMag * k * 22;
+      canvas.style.transform = 'translate(' + px.toFixed(1) + 'px,' + py.toFixed(1) + 'px)';
+    } else if (canvas.style.transform !== '') {
+      canvas.style.transform = '';
+    }
+  }
+
+  function triggerNearMiss(grazed) {
+    timeScale = 0.3; timeScaleTimer = 0.2;   // 0.2s 慢动作
+    sfxWhoosh();                             // 擦过呼啸（M3）
+    if (grazed) grazed.staggerAnim = 0.4;    // 被擦小鸡一个趔趄（M3，syncChickList 读它做后仰摇晃）
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [Web Audio]（M3）零音频文件，全程序合成。首个用户手势后才建 AudioContext（autoplay 政策）。
+  //   主线挂在 masterGain 上，🔇 静音=把 masterGain 拉 0（变量记，不存档）。
+  //   音色克制：振荡器 + 短噪声 buffer（风声/扑哧）+ 包络。
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  let actx = null;
+  let masterGain = null;
+  let muted = false;              // 🔇 静音（变量记，不存档；刷新即恢复）
+  let noiseBuffer = null;         // 白噪声 buffer（风声/扑哧/pop 共用）
+  function audioInit() {
+    if (!actx) {
+      try {
+        actx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = actx.createGain();
+        masterGain.gain.value = muted ? 0 : 1;
+        masterGain.connect(actx.destination);
+        // 预生成 0.5s 白噪声，供风声/扑哧/pop 滤波复用
+        const len = (actx.sampleRate * 0.5) | 0;
+        noiseBuffer = actx.createBuffer(1, len, actx.sampleRate);
+        const d = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      } catch (e) { actx = null; }
+    }
+    if (actx && actx.state === 'suspended') actx.resume();
+  }
+  function setMuted(m) {
+    muted = m;
+    if (masterGain) masterGain.gain.value = muted ? 0 : 1;
+    const btn = document.getElementById('btn-mute');
+    if (btn) btn.textContent = muted ? '🔇' : '🔊';
+  }
+  function toggleMute() { audioInit(); setMuted(!muted); }
+  // 单振荡器音符（可选起止频率做滑音）
+  function beep(freq, dur, type, gain, freqEnd) {
+    if (!actx || !masterGain) return;
+    const o = actx.createOscillator(), g = actx.createGain();
+    const t0 = actx.currentTime;
+    o.type = type || 'square';
+    o.frequency.setValueAtTime(freq, t0);
+    if (freqEnd != null) o.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t0 + dur);
+    g.gain.setValueAtTime(Math.max(0.0001, gain || 0.08), t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(masterGain);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  // 滤波噪声爆发（风声/扑哧/pop）：type=bandpass/lowpass/highpass
+  function noiseBurst(dur, gain, filterType, freq, q) {
+    if (!actx || !masterGain || !noiseBuffer) return;
+    const src = actx.createBufferSource(); src.buffer = noiseBuffer;
+    const flt = actx.createBiquadFilter();
+    flt.type = filterType || 'bandpass'; flt.frequency.value = freq || 800; flt.Q.value = q || 1;
+    const g = actx.createGain();
+    const t0 = actx.currentTime;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain || 0.1), t0 + dur * 0.25);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(flt); flt.connect(g); g.connect(masterGain);
+    src.start(t0); src.stop(t0 + dur + 0.02);
+    return flt;   // 返回滤波器，调用方可做 frequency 扫频（俯冲风声）
+  }
+  // 抓到惨叫：短促像素风 squawk（快速下滑 + 一段杂噪）
+  function sfxCatch() {
+    beep(620, 0.1, 'square', 0.11, 240);
+    setTimeout(() => beep(300, 0.12, 'sawtooth', 0.1, 140), 70);
+    noiseBurst(0.12, 0.05, 'highpass', 2200, 1);
+  }
+  function sfxThud() { beep(90, 0.22, 'square', 0.14, 50); }              // 喜剧碰撞声（扑空）
   function sfxHeartbeat() { beep(70, 0.12, 'sine', 0.16); setTimeout(() => beep(70, 0.12, 'sine', 0.14), 140); }
   function sfxWin() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'triangle', 0.1), i * 110)); }
   function sfxLose() { [392, 330, 262].forEach((f, i) => setTimeout(() => beep(f, 0.25, 'triangle', 0.1), i * 150)); }
+  // 老鹰俯冲风声：带通噪声 0.45s，频率从 500→1400 扫上去（呼啸感）
+  function sfxDive() {
+    const flt = noiseBurst(0.45, 0.09, 'bandpass', 500, 1.2);
+    if (flt && actx) flt.frequency.exponentialRampToValueAtTime(1400, actx.currentTime + 0.4);
+  }
+  // 翅膀开合扑哧：两下低频带通噪声（扑、哧）
+  function sfxFlap() {
+    noiseBurst(0.1, 0.07, 'bandpass', 380, 0.8);
+    setTimeout(() => noiseBurst(0.09, 0.05, 'bandpass', 300, 0.8), 90);
+  }
+  // 脱链 pop：短促上滑“啵”
+  function sfxPop() { beep(260, 0.09, 'triangle', 0.12, 520); }
+  // 重连 click：极短高频“嗒”
+  function sfxClick() { beep(900, 0.05, 'square', 0.08); }
+  // near-miss 擦过 whoosh：快速下滑带通噪声
+  function sfxWhoosh() {
+    const flt = noiseBurst(0.22, 0.08, 'bandpass', 1200, 1.5);
+    if (flt && actx) flt.frequency.exponentialRampToValueAtTime(400, actx.currentTime + 0.2);
+  }
+  // 倒计时滴答（最后 10s 每秒一下；t<=3 时音调升高更紧张）
+  function sfxTick(urgent) { beep(urgent ? 1320 : 880, 0.06, 'square', 0.07); }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // [HUD 更新]：倒计时 / 抓捕数 / 技能冷却灰罩 / 状态图标
@@ -2074,6 +2354,7 @@
   const skillBtnEl = document.getElementById('skill-btn');
   const skillCdEl = document.getElementById('skill-cd');
   const touchCdEl = document.getElementById('touch-cd');
+  const touchSkillEl = document.getElementById('touch-skill');
   const statusEl = document.getElementById('hud-status');
   function updateHud() {
     // 倒计时
@@ -2086,9 +2367,16 @@
     document.getElementById('skill-sub').textContent = info.sub;
     const pct = (info.cd * 100).toFixed(0) + '%';
     skillCdEl.style.height = pct;
-    if (touchCdEl) touchCdEl.style.height = pct;
     skillBtnEl.classList.toggle('ready', info.ready);
     skillBtnEl.classList.toggle('active', info.active);
+    // 触屏技能按钮：冷却扇形（conic-gradient 灰罩从顶部顺时针扫，cd 1→整圈）+ 状态描色
+    if (touchSkillEl) {
+      const deg = (info.cd * 360).toFixed(0);
+      touchCdEl.style.background =
+        'conic-gradient(rgba(0,0,0,0.5) 0deg, rgba(0,0,0,0.5) ' + deg + 'deg, transparent ' + deg + 'deg)';
+      touchSkillEl.classList.toggle('ready', info.ready);
+      touchSkillEl.classList.toggle('active', info.active);
+    }
     // 状态图标（致盲 / 老鹰僵直）
     let status = '';
     if (blindTimer > 0 && playerRole === ROLE.HEN) status += '😵 老鹰被致盲 ' + blindTimer.toFixed(1) + 's　';
@@ -2122,6 +2410,15 @@
       cs.x += (lerp(1, 1.3, crouchT) - cs.x) * smoothFactor(14, dt);
       cs.y += (lerp(1, 0.4, crouchT) - cs.y) * smoothFactor(14, dt);
       cs.z += (lerp(1, 1.3, crouchT) - cs.z) * smoothFactor(14, dt);
+      // near-miss 趔趄：被擦后短暂后仰 + 左右晃（M3，纯视觉，叠在 rotation 上）
+      if (c.staggerAnim > 0) {
+        c.staggerAnim = Math.max(0, c.staggerAnim - dt);
+        const k = c.staggerAnim / 0.4;                 // 1→0
+        c.mesh.rotation.x = Math.sin(c.staggerAnim * 38) * 0.5 * k;   // 后仰晃
+        c.mesh.rotation.z = Math.cos(c.staggerAnim * 30) * 0.35 * k;  // 侧晃
+      } else if (c.mesh.rotation.x !== 0 || c.mesh.rotation.z !== 0) {
+        c.mesh.rotation.x = 0; c.mesh.rotation.z = 0;  // 复位（趔趄结束）
+      }
     }
   }
 
@@ -2143,6 +2440,11 @@
       hen.mesh.rotation.x = hen.staggerTimer > 0 ? -0.3 : 0;
 
       // ── 翅膀开合动画（HenWings.cs）：wingT 0→1，肩 pivot 绕 y 从 ±70°(收) → 0°(开横展)，翅板长度随 span ──
+      // wingOpen 翻转瞬间播扑哧（M3，玩家/AI 共用，仅 RUNNING）
+      if (hen.wingOpen !== hen._lastWingOpen) {
+        if (phase === PHASE.RUNNING) sfxFlap();
+        hen._lastWingOpen = hen.wingOpen;
+      }
       const target = hen.wingOpen ? 1 : 0;
       const animSpeed = CFG.henWingAnimTime > 0 ? dt / CFG.henWingAnimTime : 1;
       hen.wingT = moveTowardsScalar(hen.wingT, target, animSpeed);
@@ -2469,6 +2771,9 @@
         if (blindTimer > 0) blindTimer -= FIXED_DT;
         // 倒计时
         timeLeft -= FIXED_DT;
+        // 最后 10s 滴答：每跨过一个整秒触发一次（t<=3 更急促，M3）
+        const sec = Math.ceil(timeLeft);
+        if (sec <= 10 && sec >= 1 && sec !== lastTickSec) { lastTickSec = sec; sfxTick(sec <= 3); }
         if (timeLeft <= 0) { timeLeft = 0; endRound('flock'); }   // 撑满 90s 鸡队赢
       }
       accumulator -= FIXED_DT;
@@ -2476,6 +2781,9 @@
 
     // 渲染同步用真实帧 dt（动画/相机平滑帧率无关）
     updateStars(frameDt);
+    updateFeathers(frameDt);   // 方块羽毛（M3）
+    updateHearts(frameDt);     // 头顶 ❤（M3）
+    updateScreenFx(frameDt);   // 闪白 + 屏震（M3）
     syncVisuals(frameDt);
     updateCamera(frameDt);
     updateHud();
@@ -2588,63 +2896,116 @@
   document.getElementById('btn-changerole').addEventListener('click', backToRoleSelect);
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // [移动端：双摇杆 + 单技能键]（调研指令 #13）
-  //  左摇杆=移动（写进 keys 模拟 WASD 的世界轴向）；右摇杆=改朝向（直接转 controlled.yaw）；
-  //  大按钮=技能。触屏时相机收窄 FOV/俯视由 desiredFov + 默认 follow 处理。
+  // [开局教学提示]（M3）：beginRound 调用，按受控角色显示一行操作提示，5s 自动淡出。
+  //   触屏/键盘文案不同（摇杆 vs WASD）。淡出靠 CSS transition + setTimeout。
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  let touchMove = { x: 0, y: 0 };   // 归一化 [-1,1]
-  let touchLook = { x: 0, y: 0 };
+  let tutorialTimer = null;
+  function showTutorial() {
+    const el = document.getElementById('tutorial');
+    const move = IS_TOUCH ? '左摇杆移动' : 'WASD/方向键移动';
+    const skill = IS_TOUCH ? '右下大按钮' : '空格';
+    const lines = {
+      0: '🦅 你是老鹰：' + move + '，' + skill + ' 蓄力俯冲叼小鸡（撞翅膀会被弹开）',
+      1: '🐔 你是母鸡：' + move + ' 卡住老鹰，' + skill + ' 张翅当墙（变宽变慢）护住小鸡',
+      2: '🐤 你是队尾小鸡：' + move + ' 跟紧队伍，' + skill + ' 紧急蹲下躲俯冲',
+    };
+    el.textContent = lines[playerRole] || '';
+    el.classList.add('show');
+    if (tutorialTimer) clearTimeout(tutorialTimer);
+    tutorialTimer = setTimeout(() => el.classList.remove('show'), 5000);
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // [移动端：动态原点左摇杆 + 右下技能 + 右上 视角/静音]（M3，调研指令 #13）
+  //   左半屏任意处按下 → 摇杆原点落在触点，拖动产出归一化向量喂 readInput；
+  //   右下技能大按钮（≥64px，updateHud 画冷却扇形）；右上 📷 切视角 / 🔇 静音。
+  //   touch-action:none（CSS）防滚动缩放；只有触屏才挂 .on / .touch。
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  let touchMove = { x: 0, y: 0 };   // 左摇杆归一化 [-1,1]（readInput 读它）
   if (IS_TOUCH) {
+    document.body.classList.add('touch');
     document.getElementById('touch-ui').classList.add('on');
-    document.getElementById('hud-hint').textContent = '⚙️ 调参';
-    setupStick('stick-move', 'knob-move', touchMove);
-    setupStick('stick-look', 'knob-look', touchLook);
+    setupDynamicStick();
+    // 技能大按钮
     const tb = document.getElementById('touch-skill');
-    const fire = (e) => {
+    const fireSkill = (e) => {
       e.preventDefault();
       audioInit();
-      if (phase === PHASE.ROLE_SELECT) return;
       if (phase === PHASE.READY) { beginRound(); return; }
       if (phase === PHASE.RUNNING) triggerSkill();
     };
-    tb.addEventListener('touchstart', fire, { passive: false });
-    tb.addEventListener('mousedown', fire);
+    tb.addEventListener('touchstart', fireSkill, { passive: false });
+    tb.addEventListener('mousedown', fireSkill);
+    // 右上：视角切换 / 静音
+    const camBtn = document.getElementById('btn-cam');
+    const tapCam = (e) => { e.preventDefault(); audioInit(); cycleCamMode(); };
+    camBtn.addEventListener('touchstart', tapCam, { passive: false });
+    camBtn.addEventListener('mousedown', tapCam);
+    const muteBtn = document.getElementById('btn-mute');
+    const tapMute = (e) => { e.preventDefault(); toggleMute(); };
+    muteBtn.addEventListener('touchstart', tapMute, { passive: false });
+    muteBtn.addEventListener('mousedown', tapMute);
   }
-  function setupStick(baseId, knobId, out) {
-    const base = document.getElementById(baseId), knob = document.getElementById(knobId);
-    let active = false, id = null, cx = 0, cy = 0;
-    const R = 48;
+
+  // 动态原点左摇杆：监听左半屏按下，摇杆生成在触点处。半径 R 内归一化。
+  function setupDynamicStick() {
+    const stick = document.getElementById('stick-move');
+    const knob = document.getElementById('knob-move');
+    const R = 56;                       // 摇杆有效半径（px）
+    let active = false, id = null, ox = 0, oy = 0;   // ox/oy=原点屏幕坐标
+    function isLeftHalf(x) { return x < window.innerWidth * 0.5; }
+    function place(x, y) {
+      ox = x; oy = y;
+      stick.style.left = x + 'px'; stick.style.top = y + 'px';
+      stick.classList.add('show');
+      knob.style.left = '50%'; knob.style.top = '50%';
+    }
     function start(e) {
+      // 仅游戏中 / 待机时接管（选角与结算阶段交给覆盖层的卡片/按钮）
+      if (phase !== PHASE.RUNNING && phase !== PHASE.READY) return;
+      // 只接管左半屏的触点（右半屏留给技能/相机按钮）
       const t = e.changedTouches ? e.changedTouches[0] : e;
-      const r = base.getBoundingClientRect();
-      cx = r.left + r.width / 2; cy = r.top + r.height / 2;
+      if (!isLeftHalf(t.clientX)) return;
+      if (active) return;                // 已有手指占用左摇杆
       active = true; id = e.changedTouches ? t.identifier : 'mouse';
       audioInit();
-      // 摇杆动了也能开局（READY → RUNNING）
-      if (phase === PHASE.READY && baseId === 'stick-move') beginRound();
-      move(e);
+      if (phase === PHASE.READY) beginRound();   // 摸一下就开局
+      place(t.clientX, t.clientY);
       e.preventDefault();
+    }
+    function findTouch(e) {
+      if (!e.changedTouches) return e;
+      for (const ct of e.changedTouches) if (ct.identifier === id) return ct;
+      return null;
     }
     function move(e) {
       if (!active) return;
-      let t = e;
-      if (e.changedTouches) { for (const ct of e.changedTouches) if (ct.identifier === id) { t = ct; break; } }
-      let dx = t.clientX - cx, dy = t.clientY - cy;
+      const t = findTouch(e); if (!t) return;
+      let dx = t.clientX - ox, dy = t.clientY - oy;
       const d = Math.hypot(dx, dy);
       if (d > R) { dx = dx / d * R; dy = dy / d * R; }
-      knob.style.left = (50 + dx / base.clientWidth * 100) + '%';
-      knob.style.top = (50 + dy / base.clientHeight * 100) + '%';
-      out.x = dx / R; out.y = dy / R;
+      // knob 中心相对底盘中心偏移 dx px；底盘 132px 宽 → 百分比 = 50 + dx/132*100
+      const base = stick.clientWidth || 132;
+      knob.style.left = (50 + dx / base * 100) + '%';
+      knob.style.top  = (50 + dy / base * 100) + '%';
+      touchMove.x = dx / R; touchMove.y = dy / R;
       e.preventDefault();
     }
     function end(e) {
-      active = false; out.x = 0; out.y = 0;
-      knob.style.left = '50%'; knob.style.top = '50%';
+      if (!active) return;
+      // 多指时只在自己那根手指抬起才结束
+      if (e.changedTouches) { const t = findTouch(e); if (!t) return; }
+      active = false; id = null;
+      touchMove.x = 0; touchMove.y = 0;
+      stick.classList.remove('show');
     }
-    base.addEventListener('touchstart', start, { passive: false });
+    // 监听整窗，由 isLeftHalf 过滤；右下技能/右上按钮 fireSkill 里已 preventDefault 且区域不重叠。
+    window.addEventListener('touchstart', start, { passive: false });
     window.addEventListener('touchmove', move, { passive: false });
     window.addEventListener('touchend', end);
-    base.addEventListener('mousedown', start);
+    window.addEventListener('touchcancel', end);
+    // 桌面鼠标也支持（便于不带触屏的开发机验证）
+    window.addEventListener('mousedown', start);
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', end);
   }

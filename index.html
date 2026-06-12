@@ -884,6 +884,7 @@
     targetY: 1.6,            // 飞行目标高度（俯冲压低）
     // ── 技能 / 状态 ──
     dashCharge: 0,           // 蓄力前摇剩余（调研指令 #1：0.3s 低头蓄力，期间速度 0）
+    dashGotCatch: false,     // 本次冲刺是否已抓到（控制扑空翻滚判定，起冲时复位）
     staggerTimer: 0,         // 得手/扑空后僵直（被弹开，输入无效）
     catchCd: 0,              // 抓捕冷却（一次俯冲最多一只）
     rollTimer: 0,            // 扑空翻滚动画剩余（调研指令 #5/#12）
@@ -946,6 +947,14 @@
     if (e.code === 'Tab') togglePanel();
     // V 循环切换视角 follow → fps → top
     if (e.code === 'KeyV' && !e.repeat) cycleCamMode();
+    // M 静音切换（桌面端：静音按钮只在触屏 UI，键盘补一条通道）
+    if (e.code === 'KeyM' && !e.repeat) toggleMute();
+
+    // ── 结算阶段键盘通道：Enter/空格 再来一局，R 换角色（与按钮点击双通道）──
+    if (phase === PHASE.SETTLE) {
+      if (e.code === 'Enter' || e.code === 'Space') restartSameRole();
+      else if (e.code === 'KeyR') backToRoleSelect();
+    }
   });
   window.addEventListener('keyup', (e) => {
     if (MOVE_KEYS.has(e.code) || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
@@ -1710,13 +1719,17 @@
 
   // ── 抓捕 / near-miss：扫所有小鸡（链上 + 脱链），冲刺中触碰 < CATCH_RADIUS 且未蹲 = 真抓 ──
   let nearMissCd = 0;
+  const _allChicks = [];   // 链上+脱链合并的复用数组（热路径每物理步调用，避免 concat 造 GC）
   function eagleCatchCheck(dt) {
     if (nearMissCd > 0) nearMissCd -= dt;
     if (eagle.dashTimer <= 0) return;            // 统一规则：必须冲刺中
     if (eagle.catchCd > 0) return;               // 抓捕冷却
     // 先扫 near-miss（擦过但没抓到 → 慢动作 + 心跳，调研指令 #2）
     let caughtOne = false;
-    const all = chicks.concat(detached);
+    _allChicks.length = 0;
+    for (const c of chicks) _allChicks.push(c);
+    for (const c of detached) _allChicks.push(c);
+    const all = _allChicks;
     for (const c of all) {
       const d = Math.hypot(c.pos.x - eagle.pos.x, c.pos.z - eagle.pos.z);
       if (d < CATCH_RADIUS) {
@@ -1752,8 +1765,19 @@
       if (i >= 0) detached.splice(i, 1);
     }
     scene.remove(c.mesh);
-    if (c === controlledChick) refreshChickMarker();   // 玩家小鸡被抓 → 迁移到新队尾
-    refreshChickMarker();
+    const wasControlled = (c === controlledChick);
+    refreshChickMarker();   // 玩家小鸡被抓 → 队尾白帽迁移到新队尾
+    // 玩家扮小鸡且被抓的正是受控小鸡：把 controlled 指针迁到新队尾，否则相机会冻结在被抓坐标。
+    // refreshChickMarker 在 buildChicks 阶段会先于 controlled 声明运行，所以这步放在 doCatch 里而非其内部。
+    if (wasControlled && playerRole === ROLE.CHICK) {
+      const prev = controlled;
+      controlled = controlledChick || hen;
+      // fps 下同步 mesh 可见性：旧受控已被 scene.remove（恢复 visible 无副作用），隐藏新受控自身
+      if (camMode === 'fps' && controlled !== prev) {
+        if (prev && prev.mesh) prev.mesh.visible = true;
+        controlled.mesh.visible = false;
+      }
+    }
     spawnStars(c.pos.x, c.pos.y + 0.4, c.pos.z, 0xffe14d);
     spawnFeathers(c.pos.x, c.pos.y + 0.35, c.pos.z, 0xffe14d);  // 方块羽毛爆开（M3）
     timeScale = 0.3; timeScaleTimer = 0.3;                       // 0.3s 慢动作（M3）
@@ -2034,6 +2058,7 @@
     eagle.forward.set(Math.sin(eagle.yaw), 0, Math.cos(eagle.yaw));
     eagle.state = 'ORBIT'; eagle.orbitDir = 1; eagle.orbitAngle = 0;
     eagle.dashTimer = 0; eagle.dashCooldown = 0; eagle.dashCharge = 0;
+    eagle.dashGotCatch = false;
     eagle.staggerTimer = 0; eagle.catchCd = 0; eagle.rollTimer = 0;
     eagle.target = null; eagle.maneuver = 0; eagle.stuckTimer = 0; eagle.bestDist = Infinity; eagle.rescanTimer = 0;
     eagle.mesh.rotation.set(0, eagle.yaw, 0);
@@ -2086,22 +2111,27 @@
   const starGeo = new THREE.BufferGeometry();
   const starPos = new Float32Array(STAR_MAX * 3);
   const starVel = new Float32Array(STAR_MAX * 3);
+  const starCol = new Float32Array(STAR_MAX * 3);   // 每粒子颜色（避免全局改色，不同 burst 各保留各自颜色）
   const starLife = new Float32Array(STAR_MAX);
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-  const starMat = new THREE.PointsMaterial({ size: 0.22, color: 0xffe14d, transparent: true, opacity: 0.95, depthWrite: false });
+  starGeo.setAttribute('color', new THREE.BufferAttribute(starCol, 3));
+  const starMat = new THREE.PointsMaterial({ size: 0.22, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false });
   const starPoints = new THREE.Points(starGeo, starMat);
   starPoints.frustumCulled = false;
   scene.add(starPoints);
+  const _starColor = new THREE.Color();
   let starCursor = 0;
   function spawnStars(x, y, z, color) {
-    starMat.color.setHex(color);
+    _starColor.setHex(color);
     for (let k = 0; k < 14; k++) {
       const i = starCursor; starCursor = (starCursor + 1) % STAR_MAX;
       starPos[i * 3] = x; starPos[i * 3 + 1] = y; starPos[i * 3 + 2] = z;
+      starCol[i * 3] = _starColor.r; starCol[i * 3 + 1] = _starColor.g; starCol[i * 3 + 2] = _starColor.b;
       const a = Math.random() * Math.PI * 2, sp = 1.5 + Math.random() * 2.5;
       starVel[i * 3] = Math.cos(a) * sp; starVel[i * 3 + 1] = 2 + Math.random() * 2.5; starVel[i * 3 + 2] = Math.sin(a) * sp;
       starLife[i] = 0.6 + Math.random() * 0.3;
     }
+    starGeo.attributes.color.needsUpdate = true;
   }
   function updateStars(dt) {
     let anyAlive = false;
@@ -2241,6 +2271,7 @@
   function triggerNearMiss(grazed) {
     timeScale = 0.3; timeScaleTimer = 0.2;   // 0.2s 慢动作
     sfxWhoosh();                             // 擦过呼啸（M3）
+    sfxHeartbeat();                          // near-miss 心跳（规格⑧，此前定义但漏挂）
     if (grazed) grazed.staggerAnim = 0.4;    // 被擦小鸡一个趔趄（M3，syncChickList 读它做后仰摇晃）
   }
 
@@ -2276,9 +2307,14 @@
     if (btn) btn.textContent = muted ? '🔇' : '🔊';
   }
   function toggleMute() { audioInit(); setMuted(!muted); }
+  // Tab 切回后 AudioContext 可能仍是 suspended（浏览器自动挂起）；每次发声前确保已恢复。
+  function ensureAudio() {
+    if (actx && actx.state === 'suspended') actx.resume();
+  }
   // 单振荡器音符（可选起止频率做滑音）
   function beep(freq, dur, type, gain, freqEnd) {
     if (!actx || !masterGain) return;
+    ensureAudio();
     const o = actx.createOscillator(), g = actx.createGain();
     const t0 = actx.currentTime;
     o.type = type || 'square';
@@ -2292,6 +2328,7 @@
   // 滤波噪声爆发（风声/扑哧/pop）：type=bandpass/lowpass/highpass
   function noiseBurst(dur, gain, filterType, freq, q) {
     if (!actx || !masterGain || !noiseBuffer) return;
+    ensureAudio();
     const src = actx.createBufferSource(); src.buffer = noiseBuffer;
     const flt = actx.createBiquadFilter();
     flt.type = filterType || 'bandpass'; flt.frequency.value = freq || 800; flt.Q.value = q || 1;

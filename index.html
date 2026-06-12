@@ -373,8 +373,8 @@
     catchCooldown: 1.2,                           // 两次抓捕最小间隔
     catchStagger: 0.9,                            // 扑空/得手后僵直秒数（M2 启用：扑空惩罚）
     // ── 脱手（ChickChain.cs）──
-    overloadStretch: 1.6,                         // 原始拉伸比超此值开始累计超载
-    overloadDuration: 0.2,                        // 持续超载这么久 = 整段脱链
+    overloadStretch: 1.6,                         // 抓握负载比（demanded/maxSp）超此值开始累计超载
+    overloadDuration: 0.3,                        // 持续超载这么久 = 整段脱链（须 >0.22s：转弯起步瞬态实测 0.2s）
     regrabRadius: 1.0,                            // 脱链小鸡跑回队尾这么近自动重连
     detachedChickSpeed: 5.5,                      // 脱链小鸡自己跑的速度
     // ── 回合 ──
@@ -1122,25 +1122,9 @@
     //            等价于"从帧开头位置出发的 position prediction"，PBD 随后在其上投影约束），有意为之。
     for (let i = 0; i < n; i++) { pbdPos[i].copy(chicks[i].pos); startPos[i].copy(chicks[i].pos); }
 
-    // ───────────────────────────────────────────────────────────────
-    // [1.5] 超载脱手判定（ChickChain.cs [1] 段）：用帧开头原始拉伸（投影前），从尾往头扫，
-    //       持续超载 > overloadDuration → 从断点到队尾整段脱链。开局 buildGrace 内跳过。
-    // ───────────────────────────────────────────────────────────────
-    if (buildGrace <= 0) {
-      computeHenAnchor(_henAnchor);
-      let breakIndex = -1;
-      for (let i = n - 1; i >= 0; i--) {
-        const c = chicks[i];
-        if (c.reattachCd > 0) continue;     // 刚重连保护期跳过
-        const lx = i === 0 ? _henAnchor.x : startPos[i - 1].x;
-        const lz = i === 0 ? _henAnchor.z : startPos[i - 1].z;
-        const raw = Math.hypot(startPos[i].x - lx, startPos[i].z - lz) / CFG.chickSpacing;
-        if (raw > CFG.overloadStretch) c.overload += dt;
-        else c.overload = Math.max(0, c.overload - 2 * dt);
-        if (c.overload > CFG.overloadDuration) { breakIndex = i; break; }
-      }
-      if (breakIndex >= 0) { detachFrom(breakIndex); return; } // 链已变，下一物理步重来
-    }
+    // [1.5 已挪到 2.5] 超载脱手判定移到行为层积分之后、PBD 投影之前——
+    // 投影后的位置永远被钳在 stretchLimit 附近，在这里测上一帧结果会让拉伸比
+    // 上限只有 ~1.3，1.6 的阈值数学上不可达（脱手变死代码，2026-06-13 实测修复）。
 
     // ───────────────────────────────────────────────────────────────
     // [2] 行为层：每只链上小鸡主动跟跑槽位（直接改速度）
@@ -1212,8 +1196,21 @@
         if (dist > 0.01) {
           // 尾端鞭甩：ampFact 一次性系数，绝不复利
           const ampFact = n > 1 ? (1 + i / (n - 1) * CFG.tailSpeedAmplify) : 1;
-          const speed = Math.min(CFG.chickRunSpeed * ampFact, dist / dt);
+          const maxSp = CFG.chickRunSpeed * ampFact;
+          const demanded = dist / dt;
+          const speed = Math.min(maxSp, demanded);
           _tmpDesired.set(toSx / dist * speed, 0, toSz / dist * speed);
+          // ── 抓握负载（脱手判据）：被拖到极限速度还追不上槽位 = 手要松了。
+          //    原版「瞬时拉伸比」在本模型不可达（小鸡会抄近道追槽位，拉伸攒不起来，
+          //    2026-06-13 实测甩 8 次峰值只有 1.41 且无持续）；改测 demanded/maxSp，
+          //    语义同 ChickChain.cs 的"持续超载"，阈值复用 CFG.overloadStretch。
+          //    只在正常槽位跟跑分支测——前半球绕侧是躲老鹰的紧急动作，不算甩链负载。
+          if (buildGrace <= 0 && c.reattachCd <= 0) {
+            const grip = demanded / maxSp;
+            if (window.__dbgGrip && grip > window.__dbgGrip.peak) window.__dbgGrip.peak = grip; // 调参探针
+            if (grip > CFG.overloadStretch) c.overload += dt;
+            else c.overload = Math.max(0, c.overload - 2 * dt);
+          }
         }
       }
 
@@ -1250,6 +1247,18 @@
       // 位置积分（行为层先积分，PBD 再投影修正）
       pbdPos[i].x += c.vel.x * dt;
       pbdPos[i].z += c.vel.z * dt;
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // [2.5] 超载脱手触发：行为层已按「抓握负载」累计 c.overload（见 [2] 槽位跟跑分支），
+    //       这里从尾往头扫，持续超载 > overloadDuration → 从断点到队尾整段脱链。
+    // ───────────────────────────────────────────────────────────────
+    if (buildGrace <= 0) {
+      let breakIndex = -1;
+      for (let i = n - 1; i >= 0; i--) {
+        if (chicks[i].overload > CFG.overloadDuration) { breakIndex = i; break; }
+      }
+      if (breakIndex >= 0) { detachFrom(breakIndex); return; } // 链已变，本步跳过 PBD，下一步重来
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -2115,7 +2124,18 @@
   const starLife = new Float32Array(STAR_MAX);
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
   starGeo.setAttribute('color', new THREE.BufferAttribute(starCol, 3));
-  const starMat = new THREE.PointsMaterial({ size: 0.22, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false });
+  // 圆形渐变 sprite（canvas 程序生成）：裸 Points 是方块贴图，fps 模式贴脸看是巨大白方块（实测教训）
+  const starTex = (() => {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+    const ctx = cv.getContext('2d');
+    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(cv);
+  })();
+  const starMat = new THREE.PointsMaterial({ size: 0.22, map: starTex, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false });
   const starPoints = new THREE.Points(starGeo, starMat);
   starPoints.frustumCulled = false;
   scene.add(starPoints);
@@ -2874,7 +2894,7 @@
     ['chainDamping',    '子步阻尼 chainDamping(每子步)', 0.90, 0.995, 0.001],
     ['tailSpeedAmplify','尾端放大 tailSpeedAmplify', 0,    0.8,   0.01],
     ['chickSpacing',    '链节间距 chickSpacing',     0.5,  1.5,   0.01],
-    ['overloadStretch', '脱手拉伸 overloadStretch',  1.2,  2.5,   0.05],
+    ['overloadStretch', '脱手负载比 overloadStretch', 1.2,  2.5,   0.05],
     ['dashCooldown',    '扑击冷却 dashCooldown',     1.0,  4.0,   0.1],
   ];
 

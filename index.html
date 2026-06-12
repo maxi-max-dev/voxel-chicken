@@ -984,14 +984,15 @@
 
     if (camMode === 'fps') {
       // ── 坦克式控制 ──
-      // forward = (sin yaw, cos yaw)；d(forward)/d(yaw) = (cos yaw, -sin yaw) = 角色右手向量。
-      // 故 yaw 增大 = 朝右转。D 增 yaw（右转），A 减 yaw（左转）。
+      // forward = (sin yaw, cos yaw)；右手向量 = cross(forward, up) = (-cos yaw, sin yaw)，
+      // 即 yaw 减小才朝右转（验证：yaw=0 朝 +Z 时右手 = -X = yaw→-90° 的方向）。
+      // 原版把 (cos,-sin)（左手向量）当成右手，导致 A/D 镜像——Max 实测"左右反了"，2026-06-13 修。
       fpsTankTurn = true;
       const turnDeg = CFG.henTurnSpeed;        // 母鸡转速；M2 其它角色可分支
       let turn = 0;
-      if (right) turn += 1;
-      if (left)  turn -= 1;
-      if (Math.abs(tmx) > 0.15) turn += tmx;   // 触屏左摇杆左右 = 转向
+      if (right) turn -= 1;
+      if (left)  turn += 1;
+      if (Math.abs(tmx) > 0.15) turn -= tmx;   // 触屏左摇杆左右 = 转向
       controlled.yaw += turn * (turnDeg * Math.PI / 180) * (dt || 0);
       controlled.forward.set(Math.sin(controlled.yaw), 0, Math.cos(controlled.yaw));
       camYaw = controlled.yaw;                 // 让 follow 相机记忆跟上手动转向
@@ -1020,9 +1021,10 @@
       // camYaw 定义：相机在角色身后，朝 +(sin camYaw, cos camYaw) 方向"看进画面"。
       // 屏幕"上(-z)"= 看向方向；屏幕"右(+x)"= 看向方向右手侧。
       const s = Math.sin(camYaw), c = Math.cos(camYaw);
-      // forward(看向)世界向量 = (s, c)；right 世界向量 = (c, -s)
-      const wx = -out.z * s + out.x * c;
-      const wz = -out.z * c - out.x * s;
+      // forward(看向)世界向量 = (s, c)；right = cross(forward, up) = (-c, s)。
+      // 原版把 right 写成 (c, -s)（实为左手向量），A/D 整个镜像——Max 实测反馈，2026-06-13 修。
+      const wx = -out.z * s - out.x * c;
+      const wz = -out.z * c + out.x * s;
       out.set(wx, 0, wz);
       // 旋转保持单位长度（out 旋转前已归一化），无需再 normalize
     }
